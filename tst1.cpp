@@ -95,7 +95,23 @@ extern "C" void avx256_noncblas_sgemm_n(
  float beta,
  float *C, int ldc);
 
+extern "C" void avx256_noncblas_sgemm_n4(
+ int M, int N, int K,
+ float alpha,
+ const float *A, int lda,
+ const float *B, int ldb,
+ float beta,
+ float *C, int ldc);
+
 extern "C" void avx256_noncblas_sgemm_ns(
+ int M, int N, int K,
+ float alpha,
+ const float *A, int lda,
+ const float *B, int ldb,
+ float beta,
+ float *C, int ldc);
+
+extern "C" void avx256_noncblas_sgemm_ns4(
  int M, int N, int K,
  float alpha,
  const float *A, int lda,
@@ -514,6 +530,24 @@ int main(int argz, char** argv)
     , &A.at(0), lda, &B.at(0), ldb, beta, &C.at(0), ldc
     , nIter_meas, nIter_check, &srcC.at(0),
     avx256_noncblas_sgemm_n);
+#endif
+
+#if 1
+  printf("Testing my 256-bit AVX hack (2x4 inner loop with 1x4 helper)...\n");
+  ::Sleep(100);
+  test_noncblas_sgemm(M, N, K, alpha
+    , &A.at(0), lda, &B.at(0), ldb, beta, &C.at(0), ldc
+    , nIter_meas, nIter_check, &srcC.at(0),
+    avx256_noncblas_sgemm_n4);
+#endif
+
+#if 1
+  printf("Testing my 256-bit AVX hack (2x4 inner loop with 1x4 helper, no copy of A)...\n");
+  ::Sleep(100);
+  test_noncblas_sgemm(M, N, K, alpha
+    , &A.at(0), lda, &B.at(0), ldb, beta, &C.at(0), ldc
+    , nIter_meas, nIter_check, &srcC.at(0),
+    avx256_noncblas_sgemm_ns4);
 #endif
 
 #if 1
