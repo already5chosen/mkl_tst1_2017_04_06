@@ -697,7 +697,9 @@ static void noncblas_sgemm_wide_n(
   int nwRemMn = nwRem - nwRemMj*B_WORDS_PER_ITER;
   int nMj = nwMj * SIMD_FACTOR;
 
-  int k_step = K;
+  const int K_STEP_NOM = 200;
+  const int K_STEP_MAX = (K_STEP_NOM/8)*12;
+  int k_step = K > K_STEP_MAX ? K_STEP_NOM : K;
   int m_step = M;
 
   const int bb_sz = SIMD_ELEM_PEC_COL_MJ*K;
@@ -729,7 +731,12 @@ static void noncblas_sgemm_wide_n(
     prm.c_option = C_OPTION_UPDATE;
     if (k==0 && prm.beta != 1.0f)
       prm.c_option = (prm.beta == 0) ? C_OPTION_REPLACE : C_OPTION_MULTIPLY;
-    int delta_k = k_step < K - k ? k_step : K - k;
+    int delta_k = K - k;
+    if (delta_k > k_step) {
+      if (delta_k < K_STEP_MAX)
+        k_step = ((unsigned)(delta_k-1)/4 + 1)*4;
+      delta_k = k_step;
+    }
     for (int m = 0; m < M; m += prm.M) {
       prm.M = m_step < M - m ? m_step : M - m;
 
