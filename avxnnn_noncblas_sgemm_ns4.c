@@ -651,7 +651,7 @@ static void noncblas_sgemm_wide_n(
   int k_step = K > K_STEP_MAX ? K_STEP_NOM : K;
   int m_step = M;
 
-  const int bb_sz = SIMD_ELEM_PEC_COL_MJ*K;
+  const int bb_sz = SIMD_ELEM_PEC_COL_MJ*k_step;
   const int workBufSz = bb_sz;
   // I didn't find a standard portable way to allocate 32-byte aligned buffer
   // So I am doing it in hackish, but reliable way
@@ -683,7 +683,7 @@ static void noncblas_sgemm_wide_n(
     int delta_k = K - k;
     if (delta_k > k_step) {
       if (delta_k < K_STEP_MAX)
-        k_step = ((unsigned)(delta_k-1)/4 + 1)*4;
+        k_step = ((unsigned)(delta_k-1)/8 + 1)*4;
       delta_k = k_step;
     }
     for (int m = 0; m < M; m += prm.M) {
