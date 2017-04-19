@@ -61,7 +61,7 @@ void fma128_noncblas_sgemm_m(
  float beta,
  float *C, int ldc);
 
-extern "C" void fma128_noncblas_sgemm_n(
+extern "C" void fma128_noncblas_sgemm_n5(
  int M, int N, int K,
  float alpha,
  const float *A, int lda,
@@ -69,9 +69,17 @@ extern "C" void fma128_noncblas_sgemm_n(
  float beta,
  float *C, int ldc);
 
-extern "C" void fma128_noncblas_sgemm_n_tune(int m_step, int k_step);
+extern "C" void fma128_noncblas_sgemm_n5_tune(int m_step, int k_step);
 
 extern "C" void avx256_noncblas_sgemm(
+ int M, int N, int K,
+ float alpha,
+ const float *A, int lda,
+ const float *B, int ldb,
+ float beta,
+ float *C, int ldc);
+
+extern "C" void avx256_noncblas_sgemm_a(
  int M, int N, int K,
  float alpha,
  const float *A, int lda,
@@ -87,7 +95,7 @@ extern "C" void avx256_noncblas_sgemm_m(
  float beta,
  float *C, int ldc);
 
-extern "C" void avx256_noncblas_sgemm_n(
+extern "C" void avx256_noncblas_sgemm_n5(
  int M, int N, int K,
  float alpha,
  const float *A, int lda,
@@ -103,7 +111,23 @@ extern "C" void avx256_noncblas_sgemm_n4(
  float beta,
  float *C, int ldc);
 
-extern "C" void avx256_noncblas_sgemm_ns(
+extern "C" void avx256_noncblas_sgemm_ns5(
+ int M, int N, int K,
+ float alpha,
+ const float *A, int lda,
+ const float *B, int ldb,
+ float beta,
+ float *C, int ldc);
+
+extern "C" void avx256_noncblas_sgemm_np5(
+ int M, int N, int K,
+ float alpha,
+ const float *A, int lda,
+ const float *B, int ldb,
+ float beta,
+ float *C, int ldc);
+
+extern "C" void avx256_noncblas_sgemm_ns5r(
  int M, int N, int K,
  float alpha,
  const float *A, int lda,
@@ -112,6 +136,22 @@ extern "C" void avx256_noncblas_sgemm_ns(
  float *C, int ldc);
 
 extern "C" void avx256_noncblas_sgemm_ns4(
+ int M, int N, int K,
+ float alpha,
+ const float *A, int lda,
+ const float *B, int ldb,
+ float beta,
+ float *C, int ldc);
+
+extern "C" void avx256_noncblas_sgemm_np4(
+ int M, int N, int K,
+ float alpha,
+ const float *A, int lda,
+ const float *B, int ldb,
+ float beta,
+ float *C, int ldc);
+
+extern "C" void avx256_noncblas_sgemm_ns4cc(
  int M, int N, int K,
  float alpha,
  const float *A, int lda,
@@ -143,7 +183,7 @@ void fma256_noncblas_sgemm_m(
  float beta,
  float *C, int ldc);
 
-extern "C" void fma256_noncblas_sgemm_n(
+extern "C" void fma256_noncblas_sgemm_n5(
  int M, int N, int K,
  float alpha,
  const float *A, int lda,
@@ -151,7 +191,7 @@ extern "C" void fma256_noncblas_sgemm_n(
  float beta,
  float *C, int ldc);
 
-extern "C" void fma256_noncblas_sgemm_n_tune(int m_step, int k_step);
+extern "C" void fma256_noncblas_sgemm_n5_tune(int m_step, int k_step);
 
 extern "C" void fma256_noncblas_sgemm_n1(
  int M, int N, int K,
@@ -492,14 +532,14 @@ int main(int argz, char** argv)
     test_noncblas_sgemm(M, N, K, alpha
       , &A.at(0), lda, &B.at(0), ldb, beta, &C.at(0), ldc
       , nIter_meas, nIter_check, &srcC.at(0),
-      fma128_noncblas_sgemm_n);
+      fma128_noncblas_sgemm_n5);
   }
   if (hasFma3) {
     printf("Testing my 128-bit FMA hack (2x5 inner loop with 1x5 helper)...\n");
     test_noncblas_sgemm(M, N, K, alpha
       , &A.at(0), lda, &B.at(0), ldb, beta, &C.at(0), ldc
       , nIter_meas, nIter_check, &srcC.at(0),
-      fma128_noncblas_sgemm_n);
+      fma128_noncblas_sgemm_n5);
   }
 #endif
 
@@ -529,7 +569,43 @@ int main(int argz, char** argv)
   test_noncblas_sgemm(M, N, K, alpha
     , &A.at(0), lda, &B.at(0), ldb, beta, &C.at(0), ldc
     , nIter_meas, nIter_check, &srcC.at(0),
-    avx256_noncblas_sgemm_n);
+    avx256_noncblas_sgemm_n5);
+#endif
+
+#if 0
+  printf("Testing my 256-bit AVX hack (mix of different cores)...\n");
+  ::Sleep(100);
+  test_noncblas_sgemm(M, N, K, alpha
+    , &A.at(0), lda, &B.at(0), ldb, beta, &C.at(0), ldc
+    , nIter_meas, nIter_check, &srcC.at(0),
+    avx256_noncblas_sgemm_a);
+#endif
+
+#if 1
+  printf("Testing my 256-bit AVX hack (2x5 inner loop with 1x5 helper, no copy of A)...\n");
+  ::Sleep(100);
+  test_noncblas_sgemm(M, N, K, alpha
+    , &A.at(0), lda, &B.at(0), ldb, beta, &C.at(0), ldc
+    , nIter_meas, nIter_check, &srcC.at(0),
+    avx256_noncblas_sgemm_ns5);
+#endif
+
+#if 1
+  printf("Testing my 256-bit AVX hack (2x5 inner loop with 1x5 helper, no copy of A or B)...\n");
+  ::Sleep(100);
+  test_noncblas_sgemm(M, N, K, alpha
+    , &A.at(0), lda, &B.at(0), ldb, beta, &C.at(0), ldc
+    , nIter_meas, nIter_check, &srcC.at(0),
+    avx256_noncblas_sgemm_np5);
+#endif
+
+#if 0
+  printf("Testing my 256-bit AVX hack (2x5 inner loop with 1x5 helper, no copy of A, inner loop not unrolled)...\n");
+  ::Sleep(100);
+  test_noncblas_sgemm(M, N, K, alpha
+    , &A.at(0), lda, &B.at(0), ldb, beta, &C.at(0), ldc
+    , nIter_meas, nIter_check, &srcC.at(0),
+    avx256_noncblas_sgemm_ns5r);
 #endif
 
 #if 1
@@ -551,12 +627,21 @@ int main(int argz, char** argv)
 #endif
 
 #if 1
-  printf("Testing my 256-bit AVX hack (2x5 inner loop with 1x5 helper, no copy of A)...\n");
+  printf("Testing my 256-bit AVX hack (2x4 inner loop with 1x4 helper, no copy of A or B)...\n");
   ::Sleep(100);
   test_noncblas_sgemm(M, N, K, alpha
     , &A.at(0), lda, &B.at(0), ldb, beta, &C.at(0), ldc
     , nIter_meas, nIter_check, &srcC.at(0),
-    avx256_noncblas_sgemm_ns);
+    avx256_noncblas_sgemm_np4);
+#endif
+
+#if 0
+  printf("Testing my 256-bit AVX hack (2x4 inner loop with 1x4 helper, no copy of A, buffered cc)...\n");
+  ::Sleep(100);
+  test_noncblas_sgemm(M, N, K, alpha
+    , &A.at(0), lda, &B.at(0), ldb, beta, &C.at(0), ldc
+    , nIter_meas, nIter_check, &srcC.at(0),
+    avx256_noncblas_sgemm_ns4cc);
 #endif
 
 #if 0
@@ -568,7 +653,7 @@ int main(int argz, char** argv)
     avx256_noncblas_sgemm_p);
 #endif
 
-#if 1
+#if 0
   printf("Testing my 256-bit AVX hack (5x2 inner loop with 4x2 helper)...\n");
   test_noncblas_sgemm(M, N, K, alpha
     , &A.at(0), lda, &B.at(0), ldb, beta, &C.at(0), ldc
@@ -624,7 +709,7 @@ int main(int argz, char** argv)
     test_noncblas_sgemm(M, N, K, alpha
       , &A.at(0), lda, &B.at(0), ldb, beta, &C.at(0), ldc
       , nIter_meas, nIter_check, &srcC.at(0),
-      fma256_noncblas_sgemm_n);
+      fma256_noncblas_sgemm_n5);
   }
 #if 0
   if (hasFma3) {
@@ -814,7 +899,7 @@ static void explore_mk(
         C[i] = srcC[i];
       for (int it = 0; it < nIter; ++it) {
         uint64_t t0 = __rdtsc();
-        fma256_noncblas_sgemm_n(
+        fma256_noncblas_sgemm_n5(
           M, N, K
           , alpha
           , &A[it*M*lda], lda
@@ -874,7 +959,7 @@ static void explore_mk(
       C[i] = srcC[i];
     for (int it = 0; it < nIter; ++it) {
       uint64_t t0 = __rdtsc();
-      fma256_noncblas_sgemm_n(
+      fma256_noncblas_sgemm_n5(
         M, N, K
         , alpha
         , &A[it*M*lda], lda
@@ -927,7 +1012,7 @@ static void explore_mk(
 
     for (int it = 0; it < nIter; ++it) {
       uint64_t t0 = __rdtsc();
-      fma256_noncblas_sgemm_n(
+      fma256_noncblas_sgemm_n5(
         M, N, K
         , alpha
         , &A[it*M*lda], lda
@@ -1004,7 +1089,7 @@ static void explore_mk(
           C[i] = srcC[i];
         for (int it = 0; it < nIter; ++it) {
           uint64_t t0 = __rdtsc();
-          fma256_noncblas_sgemm_n(
+          fma256_noncblas_sgemm_n5(
             M, N, K
             , alpha
             , &A[it*M*lda], lda
@@ -1099,7 +1184,7 @@ static void explore_mk(
           C[i] = srcC[i];
         for (int it = 0; it < nIter; ++it) {
           uint64_t t0 = __rdtsc();
-          fma256_noncblas_sgemm_n(
+          fma256_noncblas_sgemm_n5(
             M, N, K
             , alpha
             , &A[it*M*lda], lda
@@ -1168,12 +1253,12 @@ static void explore_mk(
       if (curr_m_step == m_step)
         continue;
       curr_m_step = m_step;
-      fma128_noncblas_sgemm_n_tune(curr_m_step, curr_k_step);
+      fma128_noncblas_sgemm_n5_tune(curr_m_step, curr_k_step);
       for (int i = 0; i < nIter*M*ldc; ++i)
         C[i] = srcC[i];
       for (int it = 0; it < nIter; ++it) {
         uint64_t t0 = __rdtsc();
-        fma128_noncblas_sgemm_n(
+        fma128_noncblas_sgemm_n5(
           M, N, K
           , alpha
           , &A[it*M*lda], lda

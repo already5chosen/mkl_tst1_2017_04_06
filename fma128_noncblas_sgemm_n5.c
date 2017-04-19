@@ -2,8 +2,8 @@
 #include <stdint.h>
 #include <immintrin.h>
 
-#define func_name fma128_noncblas_sgemm_n
-#define tune_name fma128_noncblas_sgemm_n_tune
+#define func_name fma128_noncblas_sgemm_n5
+#define tune_name fma128_noncblas_sgemm_n5_tune
 
 typedef float   scalar_t;
 typedef __m128  fp_vector_t;
@@ -33,4 +33,4 @@ enum {
  SMALL_M_NxK_STEP  = 24000,
 };
 
-#include "avxnnn_noncblas_sgemm_n.c"
+#include "avxnnn_noncblas_sgemm_n5.c"

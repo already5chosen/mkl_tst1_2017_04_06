@@ -2,8 +2,8 @@
 #include <stdint.h>
 #include <immintrin.h>
 
-#define func_name fma256_noncblas_sgemm_n
-#define tune_name fma256_noncblas_sgemm_n_tune
+#define func_name avx256_noncblas_sgemm_np4
+#define tune_name avx256_noncblas_sgemm_np4_tune
 
 typedef float   scalar_t;
 typedef __m256  fp_vector_t;
@@ -11,7 +11,7 @@ typedef __m256i int_vector_t;
 typedef __m128  fp_vector4_t;
 typedef __m128i int_vector4_t;
 
-#define MM_FMADD(a, b, c)            _mm256_fmadd_ps((a),(b), (c))
+#define MM_FMADD(a, b, c)            _mm256_add_ps(_mm256_mul_ps((a),(b)), (c))
 #define MM_BROADCAST_Sx(a)           _mm256_broadcast_ss((a))
 #define MM_ADD_Px(a, b)              _mm256_add_ps((a),(b))
 #define MM_MUL_Px(a, b)              _mm256_mul_ps((a),(b))
@@ -25,11 +25,7 @@ typedef __m128i int_vector4_t;
 #define MM_MASKLOADU4_Px(a, mask)    _mm_maskload_ps((a),(mask))
 
 enum {
- K_STEP            = 200,
- N_STEP_MULTIPLIER = 2,
- MxN_BLOCK_SZ      = 1600000,
- SMALL_M_THR       = 56,
- SMALL_M_NxK_STEP  = 24000,
+ N_STEP_MULTIPLIER = 4,
 };
 
-#include "avxnnn_noncblas_sgemm_n.c"
+#include "avxnnn_noncblas_sgemm_np4.c"

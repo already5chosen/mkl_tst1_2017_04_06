@@ -2,8 +2,8 @@
 #include <stdint.h>
 #include <immintrin.h>
 
-#define func_name avx256_noncblas_sgemm_ns
-#define tune_name avx256_noncblas_sgemm_ns_tune
+#define func_name avx256_noncblas_sgemm_np5
+#define tune_name avx256_noncblas_sgemm_np5_tune
 
 typedef float   scalar_t;
 typedef __m256  fp_vector_t;
@@ -28,4 +28,4 @@ enum {
  N_STEP_MULTIPLIER = 4,
 };
 
-#include "avxnnn_noncblas_sgemm_ns.c"
+#include "avxnnn_noncblas_sgemm_np5.c"
