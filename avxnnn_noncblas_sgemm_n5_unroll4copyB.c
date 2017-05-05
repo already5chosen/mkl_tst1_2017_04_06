@@ -18,10 +18,9 @@ typedef struct {
   int           masked_b_it;
   scalar_t      alpha;
   scalar_t      beta;
-  int_vector4_t mask_a[2]; // [0]= all 1s, [2] = last vector4 word
   int_vector_t  mask_b[3]; // [0]= all 1s, [1] = all ones or last SIMD word, [2] = last SIMD word
   fp_vector_t*  bb; // [SIMD_ELEM_PEC_COL_MJ*k_step];
-  fp_vector4_t* aa; // [(k_step*m_step_max)/4];
+  scalar_t*     aa; // [k_step*m_step_max];
 } noncblas_sgemm_prm_t;
 
 // major core - inner loop processes 2 SIMD columns of B x 5 rows of A
@@ -32,130 +31,226 @@ static void fma256_noncblas_sgemm_core_mj(
  int                         nRows)    // 0 < nRows    <= k_step
 {
   int ldc = pPrm->ldc;
-  int kSteps = (unsigned)(nRows-1) / 4 + 1;
+  int kSteps = (unsigned)(nRows-1) / 4;
+  int kRem   = (unsigned)(nRows-1) % 4;
   int ldbb   = B_WORDS_PER_ITER*nRows;
   int m;
-  const fp_vector4_t* A = pPrm->aa;
+  const scalar_t* A = pPrm->aa;
   int b_itLast = n_bIters - 1;
   const ptrdiff_t nextM_preftechDistance = (ldc*A_WORDS_PER_ITER - b_itLast*B_WORDS_PER_ITER*SIMD_FACTOR)*sizeof(*C);
   for (m = 0; m < pPrm->M-A_WORDS_PER_ITER+1;
-    A += kSteps*A_WORDS_PER_ITER,
+    A += nRows*A_WORDS_PER_ITER,
     C += ldc*A_WORDS_PER_ITER,
     m += A_WORDS_PER_ITER) {
     scalar_t* Crow = C;
     for (int b_it = 0; b_it <= b_itLast; Crow += B_WORDS_PER_ITER*SIMD_FACTOR, ++b_it) {
       const fp_vector_t* Bcol = &pPrm->bb[ldbb*b_it];
-      const scalar_t*    ARow = (const scalar_t*)(A);
-      fp_vector_t acc00 = MM_SETZERO_Px();
-      fp_vector_t acc10 = MM_SETZERO_Px();
-      fp_vector_t acc01 = MM_SETZERO_Px();
-      fp_vector_t acc11 = MM_SETZERO_Px();
-      fp_vector_t acc02 = MM_SETZERO_Px();
-      fp_vector_t acc12 = MM_SETZERO_Px();
-      fp_vector_t acc03 = MM_SETZERO_Px();
-      fp_vector_t acc13 = MM_SETZERO_Px();
-      fp_vector_t acc04 = MM_SETZERO_Px();
-      fp_vector_t acc14 = MM_SETZERO_Px();
+      const scalar_t* ARow = A;
 
-      for (int k = 0; k < kSteps; ++k) {
+      fp_vector_t a;
+      fp_vector_t b0 = Bcol[0];
+      fp_vector_t b1 = Bcol[1];
+      Bcol += B_WORDS_PER_ITER;
+
+      a = MM_BROADCAST_Sx(&ARow[5*0+0]);
+      fp_vector_t acc00 = MM_MUL_Px(a, b0);
+      fp_vector_t acc10 = MM_MUL_Px(a, b1);
+
+      a = MM_BROADCAST_Sx(&ARow[5*0+1]);
+      fp_vector_t acc01 = MM_MUL_Px(a, b0);
+      fp_vector_t acc11 = MM_MUL_Px(a, b1);
+
+      a = MM_BROADCAST_Sx(&ARow[5*0+2]);
+      fp_vector_t acc02 = MM_MUL_Px(a, b0);
+      fp_vector_t acc12 = MM_MUL_Px(a, b1);
+
+      a = MM_BROADCAST_Sx(&ARow[5*0+3]);
+      fp_vector_t acc03 = MM_MUL_Px(a, b0);
+      fp_vector_t acc13 = MM_MUL_Px(a, b1);
+
+      a = MM_BROADCAST_Sx(&ARow[5*0+4]);
+      fp_vector_t acc04 = MM_MUL_Px(a, b0);
+      fp_vector_t acc14 = MM_MUL_Px(a, b1);
+      ARow += A_WORDS_PER_ITER;
+
+      int k = kSteps;
+      do {
+        b0 = Bcol[0];
+        b1 = Bcol[1];
+        Bcol += B_WORDS_PER_ITER;
+
+        a = MM_BROADCAST_Sx(&ARow[5*0+0]);
+        acc00 = MM_FMADD(a, b0, acc00);
+        acc10 = MM_FMADD(a, b1, acc10);
+
+        a = MM_BROADCAST_Sx(&ARow[5*0+1]);
+        acc01 = MM_FMADD(a, b0, acc01);
+        acc11 = MM_FMADD(a, b1, acc11);
+
+        a = MM_BROADCAST_Sx(&ARow[5*0+2]);
+        acc02 = MM_FMADD(a, b0, acc02);
+        acc12 = MM_FMADD(a, b1, acc12);
+
+        a = MM_BROADCAST_Sx(&ARow[5*0+3]);
+        acc03 = MM_FMADD(a, b0, acc03);
+        acc13 = MM_FMADD(a, b1, acc13);
+
+        a = MM_BROADCAST_Sx(&ARow[5*0+4]);
+        acc04 = MM_FMADD(a, b0, acc04);
+        acc14 = MM_FMADD(a, b1, acc14);
+
+        b0 = Bcol[0];
+        b1 = Bcol[1];
+        Bcol += B_WORDS_PER_ITER;
+
+        a = MM_BROADCAST_Sx(&ARow[5*1+0]);
+        acc00 = MM_FMADD(a, b0, acc00);
+        acc10 = MM_FMADD(a, b1, acc10);
+
+        a = MM_BROADCAST_Sx(&ARow[5*1+1]);
+        acc01 = MM_FMADD(a, b0, acc01);
+        acc11 = MM_FMADD(a, b1, acc11);
+
+        a = MM_BROADCAST_Sx(&ARow[5*1+2]);
+        acc02 = MM_FMADD(a, b0, acc02);
+        acc12 = MM_FMADD(a, b1, acc12);
+
+        a = MM_BROADCAST_Sx(&ARow[5*1+3]);
+        acc03 = MM_FMADD(a, b0, acc03);
+        acc13 = MM_FMADD(a, b1, acc13);
+
+        a = MM_BROADCAST_Sx(&ARow[5*1+4]);
+        acc04 = MM_FMADD(a, b0, acc04);
+        acc14 = MM_FMADD(a, b1, acc14);
+
+        b0 = Bcol[0];
+        b1 = Bcol[1];
+        Bcol += B_WORDS_PER_ITER;
+
+        a = MM_BROADCAST_Sx(&ARow[5*2+0]);
+        acc00 = MM_FMADD(a, b0, acc00);
+        acc10 = MM_FMADD(a, b1, acc10);
+
+        a = MM_BROADCAST_Sx(&ARow[5*2+1]);
+        acc01 = MM_FMADD(a, b0, acc01);
+        acc11 = MM_FMADD(a, b1, acc11);
+
+        a = MM_BROADCAST_Sx(&ARow[5*2+2]);
+        acc02 = MM_FMADD(a, b0, acc02);
+        acc12 = MM_FMADD(a, b1, acc12);
+
+        a = MM_BROADCAST_Sx(&ARow[5*2+3]);
+        acc03 = MM_FMADD(a, b0, acc03);
+        acc13 = MM_FMADD(a, b1, acc13);
+
+        a = MM_BROADCAST_Sx(&ARow[5*2+4]);
+        acc04 = MM_FMADD(a, b0, acc04);
+        acc14 = MM_FMADD(a, b1, acc14);
+
+        b0 = Bcol[0];
+        b1 = Bcol[1];
+        Bcol += B_WORDS_PER_ITER;
+
+        a = MM_BROADCAST_Sx(&ARow[5*3+0]);
+        acc00 = MM_FMADD(a, b0, acc00);
+        acc10 = MM_FMADD(a, b1, acc10);
+
+        a = MM_BROADCAST_Sx(&ARow[5*3+1]);
+        acc01 = MM_FMADD(a, b0, acc01);
+        acc11 = MM_FMADD(a, b1, acc11);
+
+        a = MM_BROADCAST_Sx(&ARow[5*3+2]);
+        acc02 = MM_FMADD(a, b0, acc02);
+        acc12 = MM_FMADD(a, b1, acc12);
+
+        a = MM_BROADCAST_Sx(&ARow[5*3+3]);
+        acc03 = MM_FMADD(a, b0, acc03);
+        acc13 = MM_FMADD(a, b1, acc13);
+
+        a = MM_BROADCAST_Sx(&ARow[5*3+4]);
+        acc04 = MM_FMADD(a, b0, acc04);
+        acc14 = MM_FMADD(a, b1, acc14);
+
+        ARow += 4*A_WORDS_PER_ITER;
+      } while (--k);
+
+      if (kRem != 0) {
         fp_vector_t a, b0, b1;
         b0 = Bcol[0];
         b1 = Bcol[1];
         Bcol += B_WORDS_PER_ITER;
 
-        a = MM_BROADCAST_Sx(&ARow[4*0+0]);
+        a = MM_BROADCAST_Sx(&ARow[5*0+0]);
         acc00 = MM_FMADD(a, b0, acc00);
         acc10 = MM_FMADD(a, b1, acc10);
 
-        a = MM_BROADCAST_Sx(&ARow[4*1+0]);
+        a = MM_BROADCAST_Sx(&ARow[5*0+1]);
         acc01 = MM_FMADD(a, b0, acc01);
         acc11 = MM_FMADD(a, b1, acc11);
 
-        a = MM_BROADCAST_Sx(&ARow[4*2+0]);
+        a = MM_BROADCAST_Sx(&ARow[5*0+2]);
         acc02 = MM_FMADD(a, b0, acc02);
         acc12 = MM_FMADD(a, b1, acc12);
 
-        a = MM_BROADCAST_Sx(&ARow[4*3+0]);
+        a = MM_BROADCAST_Sx(&ARow[5*0+3]);
         acc03 = MM_FMADD(a, b0, acc03);
         acc13 = MM_FMADD(a, b1, acc13);
 
-        a = MM_BROADCAST_Sx(&ARow[4*4+0]);
+        a = MM_BROADCAST_Sx(&ARow[5*0+4]);
         acc04 = MM_FMADD(a, b0, acc04);
         acc14 = MM_FMADD(a, b1, acc14);
 
-        b0 = Bcol[0];
-        b1 = Bcol[1];
-        Bcol += B_WORDS_PER_ITER;
+        if (kRem != 1) {
+          b0 = Bcol[0];
+          b1 = Bcol[1];
+          Bcol += B_WORDS_PER_ITER;
 
-        a = MM_BROADCAST_Sx(&ARow[4*0+1]);
-        acc00 = MM_FMADD(a, b0, acc00);
-        acc10 = MM_FMADD(a, b1, acc10);
+          a = MM_BROADCAST_Sx(&ARow[5*1+0]);
+          acc00 = MM_FMADD(a, b0, acc00);
+          acc10 = MM_FMADD(a, b1, acc10);
 
-        a = MM_BROADCAST_Sx(&ARow[4*1+1]);
-        acc01 = MM_FMADD(a, b0, acc01);
-        acc11 = MM_FMADD(a, b1, acc11);
+          a = MM_BROADCAST_Sx(&ARow[5*1+1]);
+          acc01 = MM_FMADD(a, b0, acc01);
+          acc11 = MM_FMADD(a, b1, acc11);
 
-        a = MM_BROADCAST_Sx(&ARow[4*2+1]);
-        acc02 = MM_FMADD(a, b0, acc02);
-        acc12 = MM_FMADD(a, b1, acc12);
+          a = MM_BROADCAST_Sx(&ARow[5*1+2]);
+          acc02 = MM_FMADD(a, b0, acc02);
+          acc12 = MM_FMADD(a, b1, acc12);
 
-        a = MM_BROADCAST_Sx(&ARow[4*3+1]);
-        acc03 = MM_FMADD(a, b0, acc03);
-        acc13 = MM_FMADD(a, b1, acc13);
+          a = MM_BROADCAST_Sx(&ARow[5*1+3]);
+          acc03 = MM_FMADD(a, b0, acc03);
+          acc13 = MM_FMADD(a, b1, acc13);
 
-        a = MM_BROADCAST_Sx(&ARow[4*4+1]);
-        acc04 = MM_FMADD(a, b0, acc04);
-        acc14 = MM_FMADD(a, b1, acc14);
+          a = MM_BROADCAST_Sx(&ARow[5*1+4]);
+          acc04 = MM_FMADD(a, b0, acc04);
+          acc14 = MM_FMADD(a, b1, acc14);
 
-        b0 = Bcol[0];
-        b1 = Bcol[1];
-        Bcol += B_WORDS_PER_ITER;
+          if (kRem != 2) {
+            b0 = Bcol[0];
+            b1 = Bcol[1];
+            Bcol += B_WORDS_PER_ITER;
 
-        a = MM_BROADCAST_Sx(&ARow[4*0+2]);
-        acc00 = MM_FMADD(a, b0, acc00);
-        acc10 = MM_FMADD(a, b1, acc10);
+            a = MM_BROADCAST_Sx(&ARow[5*2+0]);
+            acc00 = MM_FMADD(a, b0, acc00);
+            acc10 = MM_FMADD(a, b1, acc10);
 
-        a = MM_BROADCAST_Sx(&ARow[4*1+2]);
-        acc01 = MM_FMADD(a, b0, acc01);
-        acc11 = MM_FMADD(a, b1, acc11);
+            a = MM_BROADCAST_Sx(&ARow[5*2+1]);
+            acc01 = MM_FMADD(a, b0, acc01);
+            acc11 = MM_FMADD(a, b1, acc11);
 
-        a = MM_BROADCAST_Sx(&ARow[4*2+2]);
-        acc02 = MM_FMADD(a, b0, acc02);
-        acc12 = MM_FMADD(a, b1, acc12);
+            a = MM_BROADCAST_Sx(&ARow[5*2+2]);
+            acc02 = MM_FMADD(a, b0, acc02);
+            acc12 = MM_FMADD(a, b1, acc12);
 
-        a = MM_BROADCAST_Sx(&ARow[4*3+2]);
-        acc03 = MM_FMADD(a, b0, acc03);
-        acc13 = MM_FMADD(a, b1, acc13);
+            a = MM_BROADCAST_Sx(&ARow[5*2+3]);
+            acc03 = MM_FMADD(a, b0, acc03);
+            acc13 = MM_FMADD(a, b1, acc13);
 
-        a = MM_BROADCAST_Sx(&ARow[4*4+2]);
-        acc04 = MM_FMADD(a, b0, acc04);
-        acc14 = MM_FMADD(a, b1, acc14);
-
-        b0 = Bcol[0];
-        b1 = Bcol[1];
-        Bcol += B_WORDS_PER_ITER;
-
-        a = MM_BROADCAST_Sx(&ARow[4*0+3]);
-        acc00 = MM_FMADD(a, b0, acc00);
-        acc10 = MM_FMADD(a, b1, acc10);
-
-        a = MM_BROADCAST_Sx(&ARow[4*1+3]);
-        acc01 = MM_FMADD(a, b0, acc01);
-        acc11 = MM_FMADD(a, b1, acc11);
-
-        a = MM_BROADCAST_Sx(&ARow[4*2+3]);
-        acc02 = MM_FMADD(a, b0, acc02);
-        acc12 = MM_FMADD(a, b1, acc12);
-
-        a = MM_BROADCAST_Sx(&ARow[4*3+3]);
-        acc03 = MM_FMADD(a, b0, acc03);
-        acc13 = MM_FMADD(a, b1, acc13);
-
-        a = MM_BROADCAST_Sx(&ARow[4*4+3]);
-        acc04 = MM_FMADD(a, b0, acc04);
-        acc14 = MM_FMADD(a, b1, acc14);
-
-        ARow += 4*A_WORDS_PER_ITER;
+            a = MM_BROADCAST_Sx(&ARow[5*2+4]);
+            acc04 = MM_FMADD(a, b0, acc04);
+            acc14 = MM_FMADD(a, b1, acc14);
+          }
+        }
       }
 
       fp_vector_t alpha_ps = MM_BROADCAST_Sx(&pPrm->alpha);
@@ -249,7 +344,9 @@ static void fma256_noncblas_sgemm_core_mj(
   }
 
   // handle remaining rows of a - non-interleaved
-  for (; m < pPrm->M;  A += kSteps, C += ldc, ++m) {
+  kSteps = (unsigned)(nRows) / 4;
+  kRem   = (unsigned)(nRows) % 4;
+  for (; m < pPrm->M;  A += nRows, C += ldc, ++m) {
     scalar_t* Crow = C;
     for (int b_it = 0; b_it <= b_itLast; Crow += B_WORDS_PER_ITER*SIMD_FACTOR, ++b_it) {
       const fp_vector_t* Bcol = &pPrm->bb[ldbb*b_it];
@@ -290,6 +387,25 @@ static void fma256_noncblas_sgemm_core_mj(
         Bcol += B_WORDS_PER_ITER;
 
         ARow += 4;
+      }
+      if (kRem != 0) {
+        fp_vector_t a;
+        a = MM_BROADCAST_Sx(&ARow[0]);
+        acc00 = MM_FMADD(a, Bcol[0], acc00);
+        acc10 = MM_FMADD(a, Bcol[1], acc10);
+        Bcol += B_WORDS_PER_ITER;
+        if (kRem != 1) {
+          a = MM_BROADCAST_Sx(&ARow[1]);
+          acc01 = MM_FMADD(a, Bcol[0], acc01);
+          acc11 = MM_FMADD(a, Bcol[1], acc11);
+          Bcol += B_WORDS_PER_ITER;
+          if (kRem != 2) {
+            a = MM_BROADCAST_Sx(&ARow[2]);
+            acc02 = MM_FMADD(a, Bcol[0], acc02);
+            acc12 = MM_FMADD(a, Bcol[1], acc12);
+            Bcol += B_WORDS_PER_ITER;
+          }
+        }
       }
       acc00 = MM_ADD_Px(acc00, acc01);
       acc02 = MM_ADD_Px(acc02, acc03);
@@ -338,9 +454,10 @@ static void fma256_noncblas_sgemm_core_mn(
  int                         nRows)    // 0 < nRows <= k_step
 {
   int ldc = pPrm->ldc;
-  int kSteps = (unsigned)(nRows - 1) / 4 + 1;
+  int kSteps = (unsigned)(nRows) / 4;
+  int kRem   = (unsigned)(nRows) % 4;
   int m;
-  const scalar_t* ARow = (const scalar_t*)(pPrm->aa);
+  const scalar_t* ARow = pPrm->aa;
   for (m = 0; m < pPrm->M - A_WORDS_PER_ITER + 1; m += A_WORDS_PER_ITER) {
     const fp_vector_t* Bcol = pPrm->bb;
     fp_vector_t acc00 = MM_SETZERO_Px();
@@ -363,36 +480,66 @@ static void fma256_noncblas_sgemm_core_mn(
       fp_vector_t b;
 
       b = Bcol[0];
-      acc00 = MM_FMADD(MM_BROADCAST_Sx(&ARow[4 * 0 + 0]), b, acc00);
-      acc01 = MM_FMADD(MM_BROADCAST_Sx(&ARow[4 * 1 + 0]), b, acc01);
-      acc02 = MM_FMADD(MM_BROADCAST_Sx(&ARow[4 * 2 + 0]), b, acc02);
-      acc03 = MM_FMADD(MM_BROADCAST_Sx(&ARow[4 * 3 + 0]), b, acc03);
-      acc04 = MM_FMADD(MM_BROADCAST_Sx(&ARow[4 * 4 + 0]), b, acc04);
+      acc00 = MM_FMADD(MM_BROADCAST_Sx(&ARow[5 * 0 + 0]), b, acc00);
+      acc01 = MM_FMADD(MM_BROADCAST_Sx(&ARow[5 * 0 + 1]), b, acc01);
+      acc02 = MM_FMADD(MM_BROADCAST_Sx(&ARow[5 * 0 + 2]), b, acc02);
+      acc03 = MM_FMADD(MM_BROADCAST_Sx(&ARow[5 * 0 + 3]), b, acc03);
+      acc04 = MM_FMADD(MM_BROADCAST_Sx(&ARow[5 * 0 + 4]), b, acc04);
 
       b = Bcol[1];
-      acc10 = MM_FMADD(MM_BROADCAST_Sx(&ARow[4 * 0 + 1]), b, acc10);
-      acc11 = MM_FMADD(MM_BROADCAST_Sx(&ARow[4 * 1 + 1]), b, acc11);
-      acc12 = MM_FMADD(MM_BROADCAST_Sx(&ARow[4 * 2 + 1]), b, acc12);
-      acc13 = MM_FMADD(MM_BROADCAST_Sx(&ARow[4 * 3 + 1]), b, acc13);
-      acc14 = MM_FMADD(MM_BROADCAST_Sx(&ARow[4 * 4 + 1]), b, acc14);
+      acc10 = MM_FMADD(MM_BROADCAST_Sx(&ARow[5 * 1 + 0]), b, acc10);
+      acc11 = MM_FMADD(MM_BROADCAST_Sx(&ARow[5 * 1 + 1]), b, acc11);
+      acc12 = MM_FMADD(MM_BROADCAST_Sx(&ARow[5 * 1 + 2]), b, acc12);
+      acc13 = MM_FMADD(MM_BROADCAST_Sx(&ARow[5 * 1 + 3]), b, acc13);
+      acc14 = MM_FMADD(MM_BROADCAST_Sx(&ARow[5 * 1 + 4]), b, acc14);
 
       b = Bcol[2];
-      acc00 = MM_FMADD(MM_BROADCAST_Sx(&ARow[4 * 0 + 2]), b, acc00);
-      acc01 = MM_FMADD(MM_BROADCAST_Sx(&ARow[4 * 1 + 2]), b, acc01);
-      acc02 = MM_FMADD(MM_BROADCAST_Sx(&ARow[4 * 2 + 2]), b, acc02);
-      acc03 = MM_FMADD(MM_BROADCAST_Sx(&ARow[4 * 3 + 2]), b, acc03);
-      acc04 = MM_FMADD(MM_BROADCAST_Sx(&ARow[4 * 4 + 2]), b, acc04);
+      acc00 = MM_FMADD(MM_BROADCAST_Sx(&ARow[5 * 2 + 0]), b, acc00);
+      acc01 = MM_FMADD(MM_BROADCAST_Sx(&ARow[5 * 2 + 1]), b, acc01);
+      acc02 = MM_FMADD(MM_BROADCAST_Sx(&ARow[5 * 2 + 2]), b, acc02);
+      acc03 = MM_FMADD(MM_BROADCAST_Sx(&ARow[5 * 2 + 3]), b, acc03);
+      acc04 = MM_FMADD(MM_BROADCAST_Sx(&ARow[5 * 2 + 4]), b, acc04);
 
       b = Bcol[3];
-      acc10 = MM_FMADD(MM_BROADCAST_Sx(&ARow[4 * 0 + 3]), b, acc10);
-      acc11 = MM_FMADD(MM_BROADCAST_Sx(&ARow[4 * 1 + 3]), b, acc11);
-      acc12 = MM_FMADD(MM_BROADCAST_Sx(&ARow[4 * 2 + 3]), b, acc12);
-      acc13 = MM_FMADD(MM_BROADCAST_Sx(&ARow[4 * 3 + 3]), b, acc13);
-      acc14 = MM_FMADD(MM_BROADCAST_Sx(&ARow[4 * 4 + 3]), b, acc14);
+      acc10 = MM_FMADD(MM_BROADCAST_Sx(&ARow[5 * 3 + 0]), b, acc10);
+      acc11 = MM_FMADD(MM_BROADCAST_Sx(&ARow[5 * 3 + 1]), b, acc11);
+      acc12 = MM_FMADD(MM_BROADCAST_Sx(&ARow[5 * 3 + 2]), b, acc12);
+      acc13 = MM_FMADD(MM_BROADCAST_Sx(&ARow[5 * 3 + 3]), b, acc13);
+      acc14 = MM_FMADD(MM_BROADCAST_Sx(&ARow[5 * 3 + 4]), b, acc14);
 
       Bcol += 4;
       ARow += 4 * A_WORDS_PER_ITER;
     }
+
+    if (kRem != 0) {
+      fp_vector_t b;
+      b = Bcol[0];
+      acc00 = MM_FMADD(MM_BROADCAST_Sx(&ARow[0]), b, acc00);
+      acc01 = MM_FMADD(MM_BROADCAST_Sx(&ARow[1]), b, acc01);
+      acc02 = MM_FMADD(MM_BROADCAST_Sx(&ARow[2]), b, acc02);
+      acc03 = MM_FMADD(MM_BROADCAST_Sx(&ARow[3]), b, acc03);
+      acc04 = MM_FMADD(MM_BROADCAST_Sx(&ARow[4]), b, acc04);
+      ARow += A_WORDS_PER_ITER;
+      if (kRem != 1) {
+        b = Bcol[1];
+        acc10 = MM_FMADD(MM_BROADCAST_Sx(&ARow[0]), b, acc10);
+        acc11 = MM_FMADD(MM_BROADCAST_Sx(&ARow[1]), b, acc11);
+        acc12 = MM_FMADD(MM_BROADCAST_Sx(&ARow[2]), b, acc12);
+        acc13 = MM_FMADD(MM_BROADCAST_Sx(&ARow[3]), b, acc13);
+        acc14 = MM_FMADD(MM_BROADCAST_Sx(&ARow[4]), b, acc14);
+        ARow += A_WORDS_PER_ITER;
+        if (kRem != 2) {
+          b = Bcol[2];
+          acc00 = MM_FMADD(MM_BROADCAST_Sx(&ARow[0]), b, acc00);
+          acc01 = MM_FMADD(MM_BROADCAST_Sx(&ARow[1]), b, acc01);
+          acc02 = MM_FMADD(MM_BROADCAST_Sx(&ARow[2]), b, acc02);
+          acc03 = MM_FMADD(MM_BROADCAST_Sx(&ARow[3]), b, acc03);
+          acc04 = MM_FMADD(MM_BROADCAST_Sx(&ARow[4]), b, acc04);
+          ARow += A_WORDS_PER_ITER;
+        }
+      }
+    }
+
     acc00 = MM_ADD_Px(acc00, acc10);
     acc01 = MM_ADD_Px(acc01, acc11);
     acc02 = MM_ADD_Px(acc02, acc12);
@@ -441,6 +588,17 @@ static void fma256_noncblas_sgemm_core_mn(
       Bcol += 4;
       ARow += 4;
     }
+    if (kRem != 0) {
+      acc00 = MM_FMADD(MM_BROADCAST_Sx(&ARow[0]), Bcol[0], acc00);
+      if (kRem != 1) {
+        acc01 = MM_FMADD(MM_BROADCAST_Sx(&ARow[1]), Bcol[1], acc01);
+        if (kRem != 2) {
+          acc02 = MM_FMADD(MM_BROADCAST_Sx(&ARow[2]), Bcol[2], acc02);
+        }
+      }
+    }
+    ARow += kRem;
+
     acc00 = MM_ADD_Px(acc00, acc01);
     acc02 = MM_ADD_Px(acc02, acc03);
     acc00 = MM_ADD_Px(acc00, acc02);
@@ -525,30 +683,49 @@ static void CopyAndTransposeMnWithMask(
     pPrm->bb[r] = MM_MASKLOADU_Px(B, mask);
 }
 
-static void CopyAndTransposeA(noncblas_sgemm_prm_t* pPrm, const scalar_t *A, int n_cols)
+static void CopyAndInterleaveA(noncblas_sgemm_prm_t* pPrm, const scalar_t *A, int n_cols)
 {
-  int nQuads = (unsigned)(n_cols-1)/4 + 1;
-  int nRows = pPrm->M;
-  int lda = pPrm->lda;
-  int_vector4_t mask = pPrm->mask_a[(n_cols%4==0) ? 0 : 1];
-  fp_vector4_t* dstRow = pPrm->aa;
+  int lda1 = pPrm->lda;
+  int lda2 = lda1 + lda1;
+  int lda3 = lda2 + lda1;
+  int lda4 = lda3 + lda1;
+  int lda5 = lda4 + lda1;
+  scalar_t* dst = pPrm->aa;
   int r;
-  // the bulk is interleaved in chunks of 4 scalar elements
-  for (r = 0; r < nRows+1-A_WORDS_PER_ITER; dstRow += nQuads*A_WORDS_PER_ITER, r += A_WORDS_PER_ITER) {
-    for (int k = 0; k < A_WORDS_PER_ITER; A += lda, ++k) {
-      fp_vector4_t* dst = &dstRow[k];
-      for (int wi = 0; wi < nQuads-1; dst += A_WORDS_PER_ITER, ++wi)
-        *dst = MM_LOADU4_Px(&A[wi*4]);
-      *dst = MM_MASKLOADU4_Px(&A[(nQuads-1)*4], mask);
+  // the bulk is interleaved
+  for (r = pPrm->M+1-A_WORDS_PER_ITER; r > 0; A += lda5, r -= A_WORDS_PER_ITER) {
+    const scalar_t *src = A;
+    for (int k = 0; k < n_cols; src += 1, dst += A_WORDS_PER_ITER, ++k) {
+      scalar_t a0 = src[0];
+      scalar_t a1 = src[lda1];
+      scalar_t a2 = src[lda2];
+      scalar_t a3 = src[lda3];
+      scalar_t a4 = src[lda4];
+      dst[0] = a0;
+      dst[1] = a1;
+      dst[2] = a2;
+      dst[3] = a3;
+      dst[4] = a4;
     }
   }
 
-  // remaining rows padded to multiple of 4, but not interleaved
-  for (; r < nRows; dstRow += nQuads, A += lda, ++r) {
-    for (int wi = 0; wi < nQuads-1; ++wi)
-      dstRow[wi] = MM_LOADU4_Px(&A[wi*4]);
-    dstRow[nQuads-1] = MM_MASKLOADU4_Px(&A[(nQuads-1)*4], mask);
+  // remaining rows not interleaved
+  r += A_WORDS_PER_ITER - 1;
+  for (; r > 0; A += lda1, dst += n_cols, --r) {
+    memcpy(dst, A, sizeof(scalar_t)*n_cols);
   }
+}
+
+static void CopyB(
+  fp_vector_t*    dst, int lddst,
+  const scalar_t* src, int ldsrc,
+  int nc, int nr)
+{
+  do {
+    memcpy(dst, src, sizeof(scalar_t)*nc);
+    dst += lddst;
+    src += ldsrc;
+  } while (--nr);
 }
 
 static int st_m_step = 0;
@@ -575,8 +752,8 @@ static void noncblas_sgemm_wide_n(
 
 
 #ifdef USE_CONSTANT_K_STEP
-  const int K_STEP_NOM = K_STEP;
-  const int K_STEP_MAX = (K_STEP_NOM/8)*12;
+  const int K_STEP_NOM = (K_STEP/4)*4 + 1;
+  const int K_STEP_MAX = (K_STEP_NOM/2)*3;
   int k_step = K > K_STEP_MAX ? K_STEP_NOM : K;
 #else
   int k_step = st_k_step;
@@ -589,7 +766,7 @@ static void noncblas_sgemm_wide_n(
     }
   }
   int k_Nsteps = (K*4-k_step)/(4*k_step) + 1;
-  k_step = k_Nsteps < 2 ? K : ((K-1)/(k_Nsteps*4) + 1) * 4;
+  k_step = k_Nsteps < 2 ? K : ((K-1)/(k_Nsteps*4) + 1) * 4 + 1;
 #endif
 
   int m_step = st_m_step;
@@ -604,9 +781,13 @@ static void noncblas_sgemm_wide_n(
   int m_Nsteps = m_step > 0 ? (M*2-m_step)/(2*m_step) + 1 : 1;
   m_step = m_Nsteps < 2 ? M : ((M-1)/(m_Nsteps*A_WORDS_PER_ITER) + 1) * A_WORDS_PER_ITER;
 
+  const int BCOPY_NCOLW = 288/SIMD_FACTOR;
+  int bcopy_ncolw = nw < BCOPY_NCOLW ? nw : BCOPY_NCOLW;
+
   const int bb_sz = SIMD_ELEM_PEC_COL_MJ*k_step;
   const int aa_sz = (m_step*k_step-1)/SIMD_FACTOR + 1;
-  const int workBufSz = aa_sz + bb_sz;
+  const int bc_sz = k_step*bcopy_ncolw;
+  const int workBufSz = aa_sz + bb_sz + bc_sz;
   // I didn't find a standard portable way to allocate 32-byte aligned buffer
   // So I am doing it in hackish, but reliable way
   char* workBufAlloc = malloc((workBufSz+1)*sizeof(fp_vector_t));
@@ -614,8 +795,9 @@ static void noncblas_sgemm_wide_n(
   fp_vector_t* workBuf = (fp_vector_t*)(workBufAlloc+workBufAdj);
 
   noncblas_sgemm_prm_t prm;
-  prm.aa = (fp_vector4_t*)(workBuf+0);
+  prm.aa = (scalar_t*)    (workBuf+0);
   prm.bb = (fp_vector_t*) (workBuf+aa_sz);
+  fp_vector_t* bcopy = workBuf+aa_sz+bb_sz;
   prm.lda = lda;
   prm.ldc = ldc;
   prm.alpha = alpha;
@@ -628,12 +810,6 @@ static void noncblas_sgemm_wide_n(
     memset((char*)&prm.mask_b[3] - sizeof(*C)*remW_n, 0, sizeof(*C)*remW_n);
     nwRemMj_masked_b_it = nwRemMj - 1;
   }
-
-  memset(&prm.mask_a[0], -1, sizeof(prm.mask_a[0]));
-  prm.mask_a[1] = prm.mask_a[0];
-  unsigned remW_k = (4 - (unsigned)(K)) % 4;
-  if (remW_k > 0) // mask off elements of rightmost fp_vector4_t word in A
-    memset((char*)&prm.mask_a[2] - sizeof(*A)*remW_k, 0, sizeof(*A)*remW_k);
 
   //printf("nMj=%d, nwRemMn=%d, nwRemMj=%d remW_n=%d n_step=%d\n", nMj, nwRemMn, nwRemMj, remW_n, n_step);
   uint64_t tt = 0;
@@ -657,30 +833,48 @@ static void noncblas_sgemm_wide_n(
 
       prm.masked_b_it = -1;          // all words in use
       prm.mask_b[1] = prm.mask_b[0]; // all words in use
-      uint64_t t0 = __rdtsc();
-      CopyAndTransposeA(&prm, &A[m*lda+k], delta_k);
-      uint64_t t1 = __rdtsc();
-      tt += t1 - t0;
+      CopyAndInterleaveA(&prm, &A[m*lda+k], delta_k);
 
       scalar_t *Crow = &C[m*ldc];
-      int n;
-      for (n = 0; n < nMj; n += n_step) {
-        // process full-width major rectangles
-        CopyAndTransposeMj(&prm, &B[k*ldb + n], ldb, N_STEP_MULTIPLIER, delta_k);
-        fma256_noncblas_sgemm_core_mj(&prm, &Crow[n], N_STEP_MULTIPLIER, delta_k);
-      }
-      if (nwRemMn > 0) {
-        if (nwRemMj == 0)
-          prm.mask_b[1] = prm.mask_b[2]; // mask for rightmost word
-        CopyAndTransposeMnWithMask(&prm, &B[k*ldb + n], ldb, delta_k);
-        fma256_noncblas_sgemm_core_mn(&prm, &Crow[n], delta_k);
-        n += SIMD_FACTOR;
-      }
-      if (nwRemMj > 0) {
-        prm.mask_b[1]   = prm.mask_b[2]; // mask for rightmost word
-        prm.masked_b_it = nwRemMj_masked_b_it;
-        CopyAndTransposeMjWithMask(&prm, &B[k*ldb + n], ldb, nwRemMj, delta_k);
-        fma256_noncblas_sgemm_core_mj(&prm, &Crow[n], nwRemMj, delta_k);
+      for (int nw0 = 0; nw0 < nw; nw0 += bcopy_ncolw) {
+        int delta_nw = nw - nw0;
+        if (delta_nw > bcopy_ncolw && delta_nw*2 < bcopy_ncolw*3)
+          bcopy_ncolw = ((unsigned)delta_nw/8 + 1) * 4;
+        int bcopy_ncol = bcopy_ncolw*SIMD_FACTOR;
+        int niMj = bcopy_ncol;
+        int lastN = (bcopy_ncolw >= nw-nw0);
+        if (lastN) {
+          bcopy_ncolw = nw-nw0;
+          bcopy_ncol  = N - nw0*SIMD_FACTOR;
+          niMj = nMj - nw0*SIMD_FACTOR;
+        }
+
+        CopyB(bcopy, bcopy_ncolw, &B[k*ldb+nw0*SIMD_FACTOR], ldb, bcopy_ncol, delta_k);
+
+        int ni;
+        for (ni = 0; ni < niMj; ni += n_step) {
+          // process full-width major rectangles
+          uint64_t t0 = __rdtsc();
+          CopyAndTransposeMj(&prm, (scalar_t*)bcopy + ni, bcopy_ncolw*SIMD_FACTOR, N_STEP_MULTIPLIER, delta_k);
+          uint64_t t1 = __rdtsc();
+          tt += t1 - t0;
+          fma256_noncblas_sgemm_core_mj(&prm, &Crow[nw0*SIMD_FACTOR+ni], N_STEP_MULTIPLIER, delta_k);
+        }
+        if (lastN) {
+          if (nwRemMn > 0) {
+            if (nwRemMj == 0)
+              prm.mask_b[1] = prm.mask_b[2]; // mask for rightmost word
+            CopyAndTransposeMnWithMask(&prm, (scalar_t*)bcopy + ni, bcopy_ncolw*SIMD_FACTOR, delta_k);
+            fma256_noncblas_sgemm_core_mn(&prm, &Crow[nw0*SIMD_FACTOR+ni], delta_k);
+            ni += SIMD_FACTOR;
+          }
+          if (nwRemMj > 0) {
+            prm.mask_b[1]   = prm.mask_b[2]; // mask for rightmost word
+            prm.masked_b_it = nwRemMj_masked_b_it;
+            CopyAndTransposeMjWithMask(&prm, (scalar_t*)bcopy + ni, bcopy_ncolw*SIMD_FACTOR, nwRemMj, delta_k);
+            fma256_noncblas_sgemm_core_mj(&prm, &Crow[nw0*SIMD_FACTOR+ni], nwRemMj, delta_k);
+          }
+        }
       }
     }
   }

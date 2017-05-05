@@ -4,6 +4,7 @@
 
 #include <stdint.h>
 #include <string.h>
+#include <stdio.h>
 #include <vector>
 #include <random>
 #include <functional>           // for std::bind
@@ -12,6 +13,10 @@
 #ifndef NO_MKL
 #include "mkl_cblas.h"
 #endif
+#if defined(__GNUC__) || defined(__clang__)
+#include <cpuid.h>
+#endif
+
 
 void ref_noncblas_sgemm(
  int M, int N, int K,
@@ -167,6 +172,14 @@ extern "C" void avx256_noncblas_sgemm_p(
  float beta,
  float *C, int ldc);
 
+extern "C" void fma256_noncblas_sgemm_p(
+ int M, int N, int K,
+ float alpha,
+ const float *A, int lda,
+ const float *B, int ldb,
+ float beta,
+ float *C, int ldc);
+
 void fma256_noncblas_sgemm(
  int M, int N, int K,
  float alpha,
@@ -193,6 +206,70 @@ extern "C" void fma256_noncblas_sgemm_n5(
 
 extern "C" void fma256_noncblas_sgemm_n5_tune(int m_step, int k_step);
 
+extern "C" void fma256_noncblas_sgemm_ns5(
+ int M, int N, int K,
+ float alpha,
+ const float *A, int lda,
+ const float *B, int ldb,
+ float beta,
+ float *C, int ldc);
+
+extern "C" void fma256_noncblas_sgemm_np5(
+ int M, int N, int K,
+ float alpha,
+ const float *A, int lda,
+ const float *B, int ldb,
+ float beta,
+ float *C, int ldc);
+
+extern "C" void fma256_noncblas_sgemm_n4(
+ int M, int N, int K,
+ float alpha,
+ const float *A, int lda,
+ const float *B, int ldb,
+ float beta,
+ float *C, int ldc);
+
+extern "C" void fma256_noncblas_sgemm_ns4(
+ int M, int N, int K,
+ float alpha,
+ const float *A, int lda,
+ const float *B, int ldb,
+ float beta,
+ float *C, int ldc);
+
+extern "C" void fma256_noncblas_sgemm_np4(
+ int M, int N, int K,
+ float alpha,
+ const float *A, int lda,
+ const float *B, int ldb,
+ float beta,
+ float *C, int ldc);
+
+extern "C" void fma256_noncblas_sgemm_n4x3(
+ int M, int N, int K,
+ float alpha,
+ const float *A, int lda,
+ const float *B, int ldb,
+ float beta,
+ float *C, int ldc);
+
+extern "C" void fma256_noncblas_sgemm_ns4x3(
+ int M, int N, int K,
+ float alpha,
+ const float *A, int lda,
+ const float *B, int ldb,
+ float beta,
+ float *C, int ldc);
+
+extern "C" void fma256_noncblas_sgemm_ns4x3orig(
+ int M, int N, int K,
+ float alpha,
+ const float *A, int lda,
+ const float *B, int ldb,
+ float beta,
+ float *C, int ldc);
+
 extern "C" void fma256_noncblas_sgemm_n1(
  int M, int N, int K,
  float alpha,
@@ -212,14 +289,6 @@ extern "C" void fma256_noncblas_sgemm_o(
  float *C, int ldc);
 
 extern "C" void fma256_noncblas_sgemm_o_tune(int m_step, int k_step);
-
-extern "C" void fma256_noncblas_sgemm_p(
- int M, int N, int K,
- float alpha,
- const float *A, int lda,
- const float *B, int ldb,
- float beta,
- float *C, int ldc);
 
 void fma256_noncblas_sgemm_3x4(
  int M, int N, int K,
@@ -252,42 +321,6 @@ void fma256_noncblas_sgemm_5x2(
  const float *B, int ldb,
  float beta,
  float *C, int ldc);
-
-extern "C" void saxpy_5x2(
-  const float* A, unsigned lda,
-  const float* B, unsigned ldb,
-  float*       C, unsigned ldc,
-  unsigned     loopCnt,
-  unsigned cnt,  unsigned cntMsk);
-
-extern "C" void saxpy_4x2(
-  const float* A, unsigned lda,
-  const float* B, unsigned ldb,
-  float*       C, unsigned ldc,
-  unsigned     loopCnt,
-  unsigned cnt,  unsigned cntMsk);
-
-extern "C" void saxpy_3x2(
-  const float* A, unsigned lda,
-  const float* B, unsigned ldb,
-  float*       C, unsigned ldc,
-  unsigned     loopCnt,
-  unsigned cnt,  unsigned cntMsk);
-
-extern "C" void saxpy_2x2(
-  const float* A, unsigned lda,
-  const float* B, unsigned ldb,
-  float*       C, unsigned ldc,
-  unsigned     loopCnt,
-  unsigned cnt,  unsigned cntMsk);
-
-extern "C" void saxpy_1x2(
-  const float* A, unsigned lda,
-  const float* B, unsigned ldb,
-  float*       C, unsigned ldc,
-  unsigned     loopCnt,
-  unsigned cnt,  unsigned cntMsk);
-
 
 #ifndef NO_MKL
 // adapt MKL cblas_sgemm to my 'noncblas' calling order
@@ -335,19 +368,17 @@ void (*uut)(
 
 bool IsFMA3Supported()
 {
-#ifdef __GNUC__
-  __builtin_cpu_init();
-  // GCC has broken CPU detection support - no way to ask for presence of FMA3.
-  // So, in the mean time, I am asking for AVX2 that, in the mean time,
-  // happens to always co-exist with FMA3. The test is not future proof.
-  // I wonder why gcc decided to make things so messy
-  return __builtin_cpu_supports("avx2");
+#if defined(__GNUC__) || defined(__clang__)
+  int EAX, EBX, ECX, EDX;
+  __cpuid (1, EAX, EBX, ECX, EDX);
+  //printf("CPU features: %08x:%08x:%08x:%08x\n", EAX, EBX, ECX, EDX);
 #else
   int cpuInfo[4];
   __cpuid(cpuInfo, 1); //  EAX, EBX, ECX, and EDX
   //printf("CPU features: %08x:%08x:%08x:%08x\n", cpuInfo[0], cpuInfo[1], cpuInfo[2], cpuInfo[3]);
-  return (cpuInfo[2] & (1 << 12)) != 0; // check for a presence of FMA3 extension
+  int ECX = cpuInfo[2];
 #endif
+  return (ECX & (1 << 12)) != 0; // check for a presence of FMA3 extension
 }
 
 static void explore_mk(
@@ -360,15 +391,6 @@ static void explore_mk(
  int nIter,
  const float *srcC
 );
-static void profile_saxpy(
-  int M, int N, int K,
-  float alpha,
-  const float *A, int lda,
-  const float *B, int ldb,
-  float beta,
-  float *C, int ldc,
-  int nIter,
-  const float *srcC);
 
 int main(int argz, char** argv)
 {
@@ -381,7 +403,6 @@ int main(int argz, char** argv)
   int ldb = 0;
   int ldc = 0;
   bool explore = false;
-  bool profile_saxpy_flag = false;
   int nIter_check = 11;
 
   for (int arg_i = 1; arg_i < argz; ++arg_i) {
@@ -394,7 +415,6 @@ int main(int argz, char** argv)
       const char* pref = prefTab[pref_i];
       size_t preflen = strlen(pref);
       if (arg[0]=='x') explore=true; else
-      if (arg[0]=='p') profile_saxpy_flag=true; else
       if ( strncasecmp(pref, arg, preflen)==0 && arg[preflen]=='=') {
         if (pref_i < 2) {
           // floating point arguments
@@ -485,13 +505,6 @@ int main(int argz, char** argv)
     return 0;
   }
 
-  if (profile_saxpy_flag) {
-    profile_saxpy(M, N, K, alpha
-    , &A.at(0), lda, &B.at(0), ldb, beta, &C.at(0), ldc
-    , nIter_meas, &srcC.at(0));
-    return 0;
-  }
-
   bool hasFma3 = IsFMA3Supported();
 
 #if 0
@@ -526,7 +539,7 @@ int main(int argz, char** argv)
     avx128_noncblas_sgemm);
 #endif
 
-#if 1
+#if 0
   if (hasFma3) {
     printf("Testing my 128-bit FMA hack (2x5 inner loop with 1x5 helper)...\n");
     test_noncblas_sgemm(M, N, K, alpha
@@ -563,7 +576,7 @@ int main(int argz, char** argv)
   }
 #endif
 
-#if 1
+#if 0
   printf("Testing my 256-bit AVX hack (2x5 inner loop with 1x5 helper)...\n");
   ::Sleep(100);
   test_noncblas_sgemm(M, N, K, alpha
@@ -581,7 +594,7 @@ int main(int argz, char** argv)
     avx256_noncblas_sgemm_a);
 #endif
 
-#if 1
+#if 0
   printf("Testing my 256-bit AVX hack (2x5 inner loop with 1x5 helper, no copy of A)...\n");
   ::Sleep(100);
   test_noncblas_sgemm(M, N, K, alpha
@@ -590,7 +603,7 @@ int main(int argz, char** argv)
     avx256_noncblas_sgemm_ns5);
 #endif
 
-#if 1
+#if 0
   printf("Testing my 256-bit AVX hack (2x5 inner loop with 1x5 helper, no copy of A or B)...\n");
   ::Sleep(100);
   test_noncblas_sgemm(M, N, K, alpha
@@ -608,7 +621,7 @@ int main(int argz, char** argv)
     avx256_noncblas_sgemm_ns5r);
 #endif
 
-#if 1
+#if 0
   printf("Testing my 256-bit AVX hack (2x4 inner loop with 1x4 helper)...\n");
   ::Sleep(100);
   test_noncblas_sgemm(M, N, K, alpha
@@ -617,7 +630,7 @@ int main(int argz, char** argv)
     avx256_noncblas_sgemm_n4);
 #endif
 
-#if 1
+#if 0
   printf("Testing my 256-bit AVX hack (2x4 inner loop with 1x4 helper, no copy of A)...\n");
   ::Sleep(100);
   test_noncblas_sgemm(M, N, K, alpha
@@ -626,7 +639,7 @@ int main(int argz, char** argv)
     avx256_noncblas_sgemm_ns4);
 #endif
 
-#if 1
+#if 0
   printf("Testing my 256-bit AVX hack (2x4 inner loop with 1x4 helper, no copy of A or B)...\n");
   ::Sleep(100);
   test_noncblas_sgemm(M, N, K, alpha
@@ -695,22 +708,127 @@ int main(int argz, char** argv)
       fma256_noncblas_sgemm_n1);
   }
 #endif
-#if 0
+
+#if 1
+  printf("\n");
   if (hasFma3) {
-    printf("Testing my 256-bit FMA hack (2x5 saxpy inner loop)...\n");
-    test_noncblas_sgemm(M, N, K, alpha
-      , &A.at(0), lda, &B.at(0), ldb, beta, &C.at(0), ldc
-      , nIter_meas, nIter_check, &srcC.at(0),
-      fma256_noncblas_sgemm_p);
-  }
-#endif
-  if (hasFma3) {
+    ::Sleep(100);
     printf("Testing my 256-bit FMA hack (2x5 inner loop with 1x5 helper)...\n");
     test_noncblas_sgemm(M, N, K, alpha
       , &A.at(0), lda, &B.at(0), ldb, beta, &C.at(0), ldc
       , nIter_meas, nIter_check, &srcC.at(0),
       fma256_noncblas_sgemm_n5);
   }
+#endif
+
+
+#if 0
+  if (hasFma3) {
+    printf("Testing my 256-bit FMA hack (2x5 inner loop with 1x5 helper, no copy of A)...\n");
+    ::Sleep(100);
+    test_noncblas_sgemm(M, N, K, alpha
+      , &A.at(0), lda, &B.at(0), ldb, beta, &C.at(0), ldc
+      , nIter_meas, nIter_check, &srcC.at(0),
+      fma256_noncblas_sgemm_ns5);
+  }
+#endif
+
+#if 0
+  printf("Testing my 256-bit FMA hack (2x5 inner loop with 1x5 helper, no copy of A or B)...\n");
+  ::Sleep(100);
+  test_noncblas_sgemm(M, N, K, alpha
+    , &A.at(0), lda, &B.at(0), ldb, beta, &C.at(0), ldc
+    , nIter_meas, nIter_check, &srcC.at(0),
+    fma256_noncblas_sgemm_np5);
+#endif
+
+#if 0
+  if (hasFma3) {
+    printf("Testing my 256-bit FMA hack (2x4 inner loop with 1x4 helper)...\n");
+    ::Sleep(100);
+    test_noncblas_sgemm(M, N, K, alpha
+      , &A.at(0), lda, &B.at(0), ldb, beta, &C.at(0), ldc
+      , nIter_meas, nIter_check, &srcC.at(0),
+      fma256_noncblas_sgemm_n4);
+  }
+#endif
+
+#if 0
+  if (hasFma3) {
+    printf("Testing my 256-bit FMA hack (2x4 inner loop with 1x4 helper, no copy of A)...\n");
+    ::Sleep(100);
+    test_noncblas_sgemm(M, N, K, alpha
+      , &A.at(0), lda, &B.at(0), ldb, beta, &C.at(0), ldc
+      , nIter_meas, nIter_check, &srcC.at(0),
+      fma256_noncblas_sgemm_ns4);
+  }
+#endif
+
+#if 1
+  if (hasFma3) {
+    printf("Testing my 256-bit FMA hack (4 rows X 3*8 columns inner loop)...\n");
+    ::Sleep(100);
+    test_noncblas_sgemm(M, N, K, alpha
+      , &A.at(0), lda, &B.at(0), ldb, beta, &C.at(0), ldc
+      , nIter_meas, nIter_check, &srcC.at(0),
+      fma256_noncblas_sgemm_n4x3);
+  }
+#endif
+
+#if 1
+  if (hasFma3) {
+    printf("Testing my 256-bit FMA hack (4 rows X 3*8 columns inner loop, no copy of A)...\n");
+    ::Sleep(100);
+    test_noncblas_sgemm(M, N, K, alpha
+      , &A.at(0), lda, &B.at(0), ldb, beta, &C.at(0), ldc
+      , nIter_meas, nIter_check, &srcC.at(0),
+      fma256_noncblas_sgemm_ns4x3);
+  }
+#endif
+
+#if 1
+  if (hasFma3) {
+    printf("Testing my 256-bit FMA hack (4 rows X 3*8 columns inner loop, no copy of A) first variant...\n");
+    ::Sleep(100);
+    test_noncblas_sgemm(M, N, K, alpha
+      , &A.at(0), lda, &B.at(0), ldb, beta, &C.at(0), ldc
+      , nIter_meas, nIter_check, &srcC.at(0),
+      fma256_noncblas_sgemm_ns4x3orig);
+  }
+#endif
+
+#if 0
+  if (hasFma3) {
+    printf("Testing my 256-bit FMA hack (4 rows X 3*8 columns inner loop, no copy of A) first version ...\n");
+    ::Sleep(100);
+    test_noncblas_sgemm(M, N, K, alpha
+      , &A.at(0), lda, &B.at(0), ldb, beta, &C.at(0), ldc
+      , nIter_meas, nIter_check, &srcC.at(0),
+      fma256_noncblas_sgemm_ns4x3fma256_noncblas_sgemm_ns4x3orig);
+  }
+#endif
+
+#if 0
+  printf("Testing my 256-bit FMA hack (2x4 inner loop with 1x4 helper, no copy of A or B)...\n");
+  ::Sleep(100);
+  test_noncblas_sgemm(M, N, K, alpha
+    , &A.at(0), lda, &B.at(0), ldb, beta, &C.at(0), ldc
+    , nIter_meas, nIter_check, &srcC.at(0),
+    fma256_noncblas_sgemm_np4);
+#endif
+
+#if 0
+  if (hasFma3) {
+    printf("Testing my 256-bit FMA hack (2x5 saxpy inner loop)...\n");
+    ::Sleep(100);
+    test_noncblas_sgemm(M, N, K, alpha
+      , &A.at(0), lda, &B.at(0), ldb, beta, &C.at(0), ldc
+      , nIter_meas, nIter_check, &srcC.at(0),
+      fma256_noncblas_sgemm_p);
+    }
+#endif
+
+
 #if 0
   if (hasFma3) {
     printf("Testing my 256-bit FMA hack (5x2 inner loop with 4x2 helper)...\n");
@@ -719,35 +837,44 @@ int main(int argz, char** argv)
       , nIter_meas, nIter_check, &srcC.at(0),
       fma256_noncblas_sgemm_m);
   }
+#endif
+
+#if 0
   if (hasFma3) {
     printf("Testing my 256-bit FMA hack (5x2 inner loop, Enh)...\n");
     test_noncblas_sgemm(M, N, K, alpha
       , &A.at(0), lda, &B.at(0), ldb, beta, &C.at(0), ldc
-      , nIter, &srcC.at(0),
+      , nIter_meas, nIter_check, &srcC.at(0),
       fma256_noncblas_sgemm_5x2);
   }
+#endif
 
+#if 0
   if (hasFma3) {
     printf("Testing my 256-bit FMA hack (3x4 inner loop)...\n");
     test_noncblas_sgemm(M, N, K, alpha
       , &A.at(0), lda, &B.at(0), ldb, beta, &C.at(0), ldc
-      , nIter, &srcC.at(0),
+      , nIter_meas, nIter_check, &srcC.at(0),
       fma256_noncblas_sgemm_3x4);
   }
+#endif
 
+#if 0
   if (hasFma3) {
     printf("Testing my 256-bit FMA hack (4x3 inner loop)...\n");
     test_noncblas_sgemm(M, N, K, alpha
       , &A.at(0), lda, &B.at(0), ldb, beta, &C.at(0), ldc
-      , nIter, &srcC.at(0),
+      , nIter_meas, nIter_check, &srcC.at(0),
       fma256_noncblas_sgemm_4x3);
   }
+#endif
 
+#if 0
   if (hasFma3) {
     printf("Testing my 256-bit FMA hack (4x2 inner loop)...\n");
     test_noncblas_sgemm(M, N, K, alpha
       , &A.at(0), lda, &B.at(0), ldb, beta, &C.at(0), ldc
-      , nIter, &srcC.at(0),
+      , nIter_meas, nIter_check, &srcC.at(0),
       fma256_noncblas_sgemm_4x2);
   }
 #endif
@@ -795,6 +922,9 @@ static uint64_t qpc() {
   return r.QuadPart;
 }
 
+extern "C" {
+uint64_t dbg_tt;
+}
 static void test_noncblas_sgemm(
  int M, int N, int K,
  float alpha,
@@ -821,7 +951,11 @@ void (*uut)(
 
   std::vector<uint64_t> dt(nIter_meas);
   std::vector<uint64_t> dpc(nIter_meas);
+  std::vector<uint64_t> tt0(nIter_meas);
+  std::vector<uint64_t> tt1(nIter_meas);
+  // std::vector<uint64_t> dx(nIter_meas);
   for (int it = 0; it < nIter_meas; ++it) {
+    dbg_tt = 0;
     uint64_t pc0 = qpc();
     uint64_t t0 = __rdtsc();
     uut(
@@ -836,15 +970,30 @@ void (*uut)(
     uint64_t pc1 = qpc();
     dt[it] = t1-t0;
     dpc[it] = pc1-pc0;
+    tt0[it] = dbg_tt;
+    tt1[it] = dt[it]-dbg_tt;
+    // t0 = __rdtsc();
+    // avx32_fadd_latency(A[it*M*lda], B[it*K*ldb], 100000);
+    // t1 = __rdtsc();
+    // dx[it] = t1-t0;
   }
+  // for (int it = 0; it < nIter_meas; ++it)
+    // printf(" %.0f", double(tt[it]));
+  // printf("\n");
   for (int it = 0; it < nIter_meas; ++it)
     printf(" %.0f", double(dt[it]));
+    // printf(" %.0f/%.0f", double(dt[it]), double(dx[it]));
+  std::nth_element(tt0.begin(), tt0.begin()+nIter_meas/2, tt0.begin()+nIter_meas);
+  std::nth_element(tt1.begin(), tt1.begin()+nIter_meas/2, tt1.begin()+nIter_meas);
   std::nth_element(dt.begin(), dt.begin()+nIter_meas/2, dt.begin()+nIter_meas);
   std::nth_element(dpc.begin(), dpc.begin()+nIter_meas/2, dpc.begin()+nIter_meas);
-  printf(":\n med %.0f. %.3f FLOP/clk %.3f GFLOP/clk\n"
+  printf(":\n med %.0f. %.3f FLOP/clk %.3f GFLOP/clk    %.0f + %.0f = %.0f+\n"
     , double(dt[nIter_meas/2])
     , double(M)*N*K*2/double(dt[nIter_meas/2])
     , pfr.QuadPart*1e-9*double(M)*N*K*2/double(dpc[nIter_meas/2])
+    , double(tt0[nIter_meas/2])
+    , double(tt1[nIter_meas/2])
+    , double(dt[nIter_meas/2])
     );
 
   std::vector<float> refC(M*ldc);
@@ -1377,166 +1526,3 @@ static void explore_mk(
 #endif
 }
 
-static void profile_saxpy(
-  int M, int N, int K,
-  float alpha,
-  const float *A, int lda,
-  const float *B, int ldb,
-  float beta,
-  float       *C, int ldc,
-  int nIter_meas,
-  const float *srcC)
-{
-  int loopCount = N/8;
-  int cnt = 1000000/loopCount;
-  std::vector<uint64_t> dt(nIter_meas);
-
-  for (int i = 0; i < nIter_meas*M*ldc; ++i)
-    C[i] = srcC[i];
-
-  for (int it = 0; it < nIter_meas; ++it) {
-    uint64_t t0 = __rdtsc();
-    saxpy_5x2(
-        &A[it*M*lda+4], lda
-      , &B[it*K*ldb+4], ldb
-      , &C[it*M*ldc+4], ldc
-      , loopCount
-      , cnt
-      , 7
-      );
-    uint64_t t1 = __rdtsc();
-    dt[it] = t1-t0;
-  }
-  for (int it = 0; it < nIter_meas; ++it)
-    printf(" %.0f", double(dt[it]));
-  std::nth_element(dt.begin(), dt.begin()+nIter_meas/2, dt.begin()+nIter_meas);
-  double FLOPperLoop = 8*2*10;
-  double FLOP = loopCount*FLOPperLoop*cnt;
-  uint64_t med = dt[nIter_meas/2];
-  printf(
-    ":\n5x2 med %.0f. %.3f FLOP/clk %.2f clks/iter\n"
-    "A %p B %p C %p\n"
-    , double(med)
-    , FLOP/double(med)
-    , double(med)/cnt/loopCount
-    , A+4
-    , B+4
-    , C+4
-    );
-
-  for (int i = 0; i < nIter_meas*M*ldc; ++i)
-    C[i] = srcC[i];
-
-  for (int it = 0; it < nIter_meas; ++it) {
-    uint64_t t0 = __rdtsc();
-    saxpy_4x2(
-        &A[it*M*lda+4], lda
-      , &B[it*K*ldb+4], ldb
-      , &C[it*M*ldc+4], ldc
-      , loopCount
-      , cnt
-      , 7
-      );
-    uint64_t t1 = __rdtsc();
-    dt[it] = t1-t0;
-  }
-  for (int it = 0; it < nIter_meas; ++it)
-    printf(" %.0f", double(dt[it]));
-  std::nth_element(dt.begin(), dt.begin()+nIter_meas/2, dt.begin()+nIter_meas);
-  FLOPperLoop = 8*2*8;
-  FLOP = loopCount*FLOPperLoop*cnt;
-  med = dt[nIter_meas/2];
-  printf(
-    ":\n4x2 med %.0f. %.3f FLOP/clk %.2f clks/iter\n"
-    , double(med)
-    , FLOP/double(med)
-    , double(med)/cnt/loopCount
-    );
-
-  for (int i = 0; i < nIter_meas*M*ldc; ++i)
-    C[i] = srcC[i];
-
-  for (int it = 0; it < nIter_meas; ++it) {
-    uint64_t t0 = __rdtsc();
-    saxpy_3x2(
-        &A[it*M*lda+4], lda
-      , &B[it*K*ldb+4], ldb
-      , &C[it*M*ldc+4], ldc
-      , loopCount
-      , cnt
-      , 7
-      );
-    uint64_t t1 = __rdtsc();
-    dt[it] = t1-t0;
-  }
-  for (int it = 0; it < nIter_meas; ++it)
-    printf(" %.0f", double(dt[it]));
-  std::nth_element(dt.begin(), dt.begin()+nIter_meas/2, dt.begin()+nIter_meas);
-  FLOPperLoop = 8*2*6;
-  FLOP = loopCount*FLOPperLoop*cnt;
-  med = dt[nIter_meas/2];
-  printf(
-    ":\n3x2 med %.0f. %.3f FLOP/clk %.2f clks/iter\n"
-    , double(med)
-    , FLOP/double(med)
-    , double(med)/cnt/loopCount
-    );
-
-  for (int i = 0; i < nIter_meas*M*ldc; ++i)
-    C[i] = srcC[i];
-
-  for (int it = 0; it < nIter_meas; ++it) {
-    uint64_t t0 = __rdtsc();
-    saxpy_2x2(
-        &A[it*M*lda+4], lda
-      , &B[it*K*ldb+4], ldb
-      , &C[it*M*ldc+4], ldc
-      , loopCount
-      , cnt
-      , 7
-      );
-    uint64_t t1 = __rdtsc();
-    dt[it] = t1-t0;
-  }
-  for (int it = 0; it < nIter_meas; ++it)
-    printf(" %.0f", double(dt[it]));
-  std::nth_element(dt.begin(), dt.begin()+nIter_meas/2, dt.begin()+nIter_meas);
-  FLOPperLoop = 8*2*4;
-  FLOP = loopCount*FLOPperLoop*cnt;
-  med = dt[nIter_meas/2];
-  printf(
-    ":\n2x2 med %.0f. %.3f FLOP/clk %.2f clks/iter\n"
-    , double(med)
-    , FLOP/double(med)
-    , double(med)/cnt/loopCount
-    );
-
-  for (int i = 0; i < nIter_meas*M*ldc; ++i)
-    C[i] = srcC[i];
-
-  for (int it = 0; it < nIter_meas; ++it) {
-    uint64_t t0 = __rdtsc();
-    saxpy_1x2(
-        &A[it*M*lda+4], lda
-      , &B[it*K*ldb+4], ldb
-      , &C[it*M*ldc+4], ldc
-      , loopCount
-      , cnt
-      , 7
-      );
-    uint64_t t1 = __rdtsc();
-    dt[it] = t1-t0;
-  }
-  for (int it = 0; it < nIter_meas; ++it)
-    printf(" %.0f", double(dt[it]));
-  std::nth_element(dt.begin(), dt.begin()+nIter_meas/2, dt.begin()+nIter_meas);
-  FLOPperLoop = 8*2*2;
-  FLOP = loopCount*FLOPperLoop*cnt;
-  med = dt[nIter_meas/2];
-  printf(
-    ":\n1x2 med %.0f. %.3f FLOP/clk %.2f clks/iter\n"
-    , double(med)
-    , FLOP/double(med)
-    , double(med)/cnt/loopCount
-    );
-}
