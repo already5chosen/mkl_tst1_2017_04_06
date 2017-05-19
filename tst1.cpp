@@ -270,6 +270,14 @@ extern "C" void fma256_noncblas_sgemm_ns4x3(
  float beta,
  float *C, int ldc);
 
+extern "C" void fma256_noncblas_sgemm_ns3x3(
+ int M, int N, int K,
+ float alpha,
+ const float *A, int lda,
+ const float *B, int ldb,
+ float beta,
+ float *C, int ldc);
+
 extern "C" void fma256_noncblas_sgemm_ns4x3orig(
  int M, int N, int K,
  float alpha,
@@ -721,17 +729,6 @@ int main(int argz, char** argv)
   printf("\n");
   if (hasFma3) {
     ::Sleep(100);
-    printf("Testing my 256-bit FMA hack (2x5 inner loop with 1x5 helper, preserve transposed B)...\n");
-    test_noncblas_sgemm(M, N, K, alpha
-      , &A.at(0), lda, &B.at(0), ldb, beta, &C.at(0), ldc
-      , nIter_meas, nIter_check, &srcC.at(0),
-      fma256_noncblas_sgemm_nt5);
-  }
-#endif
-
-#if 1
-  if (hasFma3) {
-    ::Sleep(100);
     printf("Testing my 256-bit FMA hack (2x5 inner loop with 1x5 helper)...\n");
     test_noncblas_sgemm(M, N, K, alpha
       , &A.at(0), lda, &B.at(0), ldb, beta, &C.at(0), ldc
@@ -739,7 +736,6 @@ int main(int argz, char** argv)
       fma256_noncblas_sgemm_n5);
   }
 #endif
-
 
 #if 0
   if (hasFma3) {
@@ -806,6 +802,17 @@ int main(int argz, char** argv)
 #endif
 
 #if 1
+  if (hasFma3) {
+    printf("Testing my 256-bit FMA hack (3 rows X 3*8 columns inner loop, no copy of A)...\n");
+    ::Sleep(100);
+    test_noncblas_sgemm(M, N, K, alpha
+      , &A.at(0), lda, &B.at(0), ldb, beta, &C.at(0), ldc
+      , nIter_meas, nIter_check, &srcC.at(0),
+      fma256_noncblas_sgemm_ns3x3);
+  }
+#endif
+
+#if 0
   if (hasFma3) {
     printf("Testing my 256-bit FMA hack (4 rows X 3*8 columns inner loop, no copy of A) first variant...\n");
     ::Sleep(100);
