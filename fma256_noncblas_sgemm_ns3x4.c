@@ -29,7 +29,7 @@ enum {
  N_STEP_MULTIPLIER = 3,
  MxN_BLOCK_SZ      = 1600000,
  K_STEP            = 128,
- M_STEP            = 600,
+ M_STEP            = 200,
 };
 
 #include "avxnnn_noncblas_sgemm_ns3x4_unroll1.c"

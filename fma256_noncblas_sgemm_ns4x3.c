@@ -24,10 +24,12 @@ typedef __m128i int_vector4_t;
 #define MM_LOADU4_Px(a)              _mm_loadu_ps((a))
 #define MM_MASKLOADU4_Px(a, mask)    _mm_maskload_ps((a),(mask))
 
+#define USE_CONSTANT_M_STEP
 enum {
  N_STEP_MULTIPLIER = 4,
  MxN_BLOCK_SZ      = 1600000,
  K_STEP            = 128,
+ M_STEP            = 250,
 };
 
 #include "avxnnn_noncblas_sgemm_ns4x3_unroll3.c"

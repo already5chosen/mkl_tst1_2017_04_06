@@ -820,7 +820,7 @@ int main(int argz, char** argv)
   }
 #endif
 
-#if 1
+#if 0
   if (hasFma3) {
     printf("Testing my 256-bit FMA hack (3 rows X 4*8 columns inner loop, no copy of A)...\n");
     ::Sleep(100);
