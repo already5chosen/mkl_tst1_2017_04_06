@@ -289,7 +289,7 @@ static void fma256_noncblas_sgemm_core_mj(
           c0 = *src++;
           c1 = *src++;
           MM_STOREU_Px    (dst,       MM_FMADD(c0, alpha_ps, MM_LOADU_Px    (dst)      )); PrefetchC(dst); dst += SIMD_FACTOR;
-          MM_MASKSTOREU_Px(dst, mask, MM_FMADD(c1, alpha_ps, MM_MASKLOADU_Px(dst, mask))); PrefetchC(dst); dst += SIMD_FACTOR;          
+          MM_MASKSTOREU_Px(dst, mask, MM_FMADD(c1, alpha_ps, MM_MASKLOADU_Px(dst, mask))); PrefetchC(dst); dst += SIMD_FACTOR;
           Crow += ldc;
           cbuf += SIMD_ELEM_PEC_COL_MJ;
         }
@@ -683,7 +683,7 @@ static void noncblas_sgemm_wide_n(
   int nwRemMn = nwRem - nwRemMj*B_WORDS_PER_ITER;
   int nMj = nwMj * SIMD_FACTOR;
 
-  const int K_STEP_NOM = 200;
+  const int K_STEP_NOM = K_STEP;
   const int K_STEP_MAX = (K_STEP_NOM/8)*12;
   int k_step = K > K_STEP_MAX ? K_STEP_NOM : K;
   int m_step = M;

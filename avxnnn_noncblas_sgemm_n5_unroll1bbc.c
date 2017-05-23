@@ -1193,21 +1193,20 @@ static void noncblas_sgemm_wide_n(
   k_step = k_Nsteps < 2 ? K : ((K-1)/(k_Nsteps*2) + 1) * 2 + 1;
 #endif
 
-  int m_step = st_m_step;
-  if (m_step == 0) // auto m_step
+  int m_step_nom = st_m_step;
+  if (m_step_nom == 0) // auto m_step
 #ifdef USE_CONSTANT_M_STEP
-    m_step = M < M_STEP ? M : M_STEP;
-  const int m_step_min = (unsigned)m_step / 2;
+    m_step_nom = M < M_STEP ? M : M_STEP;
 #else
-    m_step = MxN_BLOCK_SZ/(N*sizeof(scalar_t));
-  m_step = m_step > 20 ? m_step : 20;
-  int m_Nsteps = m_step > 0 ? (M*2-m_step)/(2*m_step) + 1 : 1;
-  m_step = m_Nsteps < 2 ? M : ((M-1)/(m_Nsteps*A_WORDS_PER_ITER) + 1) * A_WORDS_PER_ITER;
+    m_step_nom = MxN_BLOCK_SZ/(N*sizeof(scalar_t));
+  m_step_nom = m_step_nom > 20 ? m_step_nom : 20;
+  int m_Nsteps = m_step_nom > 0 ? (M*2-m_step_nom)/(2*m_step_nom) + 1 : 1;
+  m_step_nom = m_Nsteps < 2 ? M : ((M-1)/(m_Nsteps*A_WORDS_PER_ITER) + 1) * A_WORDS_PER_ITER;
 #endif
 
 
   const int bb_sz = SIMD_ELEM_PEC_COL_MJ*k_step;
-  const int aa_sz = (m_step*k_step-1)/SIMD_FACTOR + 1;
+  const int aa_sz = (m_step_nom*k_step-1)/SIMD_FACTOR + 1;
   const int workBufSz = aa_sz + bb_sz;
   // I didn't find a standard portable way to allocate 32-byte aligned buffer
   // So I am doing it in hackish, but reliable way
@@ -1251,12 +1250,13 @@ static void noncblas_sgemm_wide_n(
     int delta_k = k_step < K - k ? k_step : K - k;
 #endif
 
+    int m_step = m_step_nom;
     for (int m = 0; m < M; m += prm.M) {
       int delta_m = M - m;
       if (delta_m > m_step) {
 #ifdef USE_CONSTANT_M_STEP
-        if (delta_m - m_step < m_step_min)
-          m_step = ((delta_m-1)/A_WORDS_PER_ITER + 1)*A_WORDS_PER_ITER;
+        if (delta_m*2 < m_step*3)
+          m_step = ((unsigned)(delta_m-1)/(A_WORDS_PER_ITER*2) + 1)*A_WORDS_PER_ITER;
 #endif
         delta_m = m_step;
       }

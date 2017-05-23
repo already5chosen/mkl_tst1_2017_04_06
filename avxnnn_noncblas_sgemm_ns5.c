@@ -697,7 +697,7 @@ static void noncblas_sgemm_wide_n(
   int nwRemMn = nwRem - nwRemMj*B_WORDS_PER_ITER;
   int nMj = nwMj * SIMD_FACTOR;
 
-  const int K_STEP_NOM = 200;
+  const int K_STEP_NOM = K_STEP;
   const int K_STEP_MAX = (K_STEP_NOM/8)*12;
   int k_step = K > K_STEP_MAX ? K_STEP_NOM : K;
   int m_step = M;

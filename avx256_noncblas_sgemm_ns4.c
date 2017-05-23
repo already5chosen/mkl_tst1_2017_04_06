@@ -26,6 +26,7 @@ typedef __m128i int_vector4_t;
 
 enum {
  N_STEP_MULTIPLIER = 4,
+ K_STEP = 200,
 };
 
 #include "avxnnn_noncblas_sgemm_ns4.c"

@@ -599,16 +599,16 @@ static void noncblas_sgemm_wide_n(
 
   const int M_STEP_NOM = ((M_STEP-1)/A_WORDS_PER_ITER + 1) * A_WORDS_PER_ITER;
   const int M_STEP_MAX = (M_STEP_NOM/2)*3;
-  int m_step = M > M_STEP_NOM ? M_STEP_NOM : M;
+  int m_step_nom = M > M_STEP_NOM ? M_STEP_NOM : M;
 
   const int N_SUPERSTEP_NOM = N_SUPERSTEP;
   const int N_SUPERSTEP_MAX = (N_SUPERSTEP_NOM/2)*3;
   int n_superstep = N > N_SUPERSTEP_NOM ? N_SUPERSTEP_NOM : N;
 
   const int n_super_step_multiplier = (n_superstep-1)/n_step+1;
-  const int aa_sz = (m_step*k_step-1)/SIMD_FACTOR + 1;
+  const int aa_sz = (m_step_nom*k_step-1)/SIMD_FACTOR + 1;
   const int bb_sz = SIMD_ELEM_PEC_COL_MJ*n_super_step_multiplier*k_step;
-  const int cc_sz = SIMD_ELEM_PEC_COL_MJ*n_super_step_multiplier*m_step;
+  const int cc_sz = SIMD_ELEM_PEC_COL_MJ*n_super_step_multiplier*m_step_nom;
   const int workBufSz = aa_sz + bb_sz + cc_sz;
   // I didn't find a standard portable way to allocate 32-byte aligned buffer
   // So I am doing it in hackish, but reliable way
@@ -663,7 +663,7 @@ static void noncblas_sgemm_wide_n(
       }
 
       fp_vector_t* cc_beg = &bb_beg[SIMD_ELEM_PEC_COL_MJ*k_step*n_steps];
-
+      int m_step = m_step_nom;
       for (int m = 0; m < M; m += prm.M) {
         int delta_m = M - m;
         if (delta_m > m_step) {
