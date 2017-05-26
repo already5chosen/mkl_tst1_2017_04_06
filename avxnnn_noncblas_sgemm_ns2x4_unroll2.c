@@ -1,6 +1,6 @@
 enum {
  SIMD_FACTOR          = sizeof(fp_vector_t)/sizeof(scalar_t),
- A_WORDS_PER_ITER     = 3,
+ A_WORDS_PER_ITER     = 2,
  B_WORDS_PER_ITER     = 4,
  SIMD_ELEM_PEC_COL_MJ = B_WORDS_PER_ITER*N_STEP_MULTIPLIER,
  n_step               = SIMD_ELEM_PEC_COL_MJ*SIMD_FACTOR,
@@ -23,7 +23,7 @@ typedef struct {
   const scalar_t* A;
 } noncblas_sgemm_prm_t;
 
-// major core - inner loop processes 3 SIMD columns of B x 3 rows of A
+// major core - inner loop processes 4 SIMD columns of B x 2 rows of A
 static void fma256_noncblas_sgemm_core_mj(
  const noncblas_sgemm_prm_t* pPrm,
  scalar_t*                   C,
@@ -39,9 +39,8 @@ static void fma256_noncblas_sgemm_core_mj(
   int b_itLast = n_bIters - 1;
   int lda1 = pPrm->lda;
   int lda2 = lda1+lda1;
-  int lda3 = lda2+lda1;
   for (m = pPrm->M - A_WORDS_PER_ITER + 1; m > 0;
-    A += lda3,
+    A += lda2,
     C += ldc*A_WORDS_PER_ITER,
     m -= A_WORDS_PER_ITER) {
     scalar_t* Crow = C;
@@ -57,7 +56,6 @@ static void fma256_noncblas_sgemm_core_mj(
 
       fp_vector_t a0 = MM_BROADCAST_Sx(&ARow[0]);
       fp_vector_t a1 = MM_BROADCAST_Sx(&ARow[lda1+0]);
-      fp_vector_t a2 = MM_BROADCAST_Sx(&ARow[lda2+0]);
       ARow += 1;
 
       b = Bcol[0];
@@ -65,78 +63,62 @@ static void fma256_noncblas_sgemm_core_mj(
       Prefetch3words(CPrefetch); CPrefetch += ldc;
       fp_vector_t acc01 = MM_MUL_Px(a1, b);
       Prefetch3words(CPrefetch); CPrefetch += ldc;
-      fp_vector_t acc02 = MM_MUL_Px(a2, b);
-      Prefetch3words(CPrefetch); CPrefetch += ldc;
 
       b = Bcol[1];
       fp_vector_t acc10 = MM_MUL_Px(a0, b);
       fp_vector_t acc11 = MM_MUL_Px(a1, b);
-      fp_vector_t acc12 = MM_MUL_Px(a2, b);
 
       b = Bcol[2];
       fp_vector_t acc20 = MM_MUL_Px(a0, b);
       fp_vector_t acc21 = MM_MUL_Px(a1, b);
-      fp_vector_t acc22 = MM_MUL_Px(a2, b);
 
       b = Bcol[3];
       fp_vector_t acc30 = MM_MUL_Px(a0, b);
       fp_vector_t acc31 = MM_MUL_Px(a1, b);
-      fp_vector_t acc32 = MM_MUL_Px(a2, b);
 
       Bcol += B_WORDS_PER_ITER;
 
       int k = kFullSteps;
-//      int k = nRows-1;
       do {
         a0 = MM_BROADCAST_Sx(&ARow[0]);
         a1 = MM_BROADCAST_Sx(&ARow[lda1+0]);
-        a2 = MM_BROADCAST_Sx(&ARow[lda2+0]);
 
         b = Bcol[0];
         acc00 = MM_FMADD(a0, b, acc00);
         acc01 = MM_FMADD(a1, b, acc01);
-        acc02 = MM_FMADD(a2, b, acc02);
 
         b = Bcol[1];
         acc10 = MM_FMADD(a0, b, acc10);
         acc11 = MM_FMADD(a1, b, acc11);
-        acc12 = MM_FMADD(a2, b, acc12);
 
         b = Bcol[2];
         acc20 = MM_FMADD(a0, b, acc20);
         acc21 = MM_FMADD(a1, b, acc21);
-        acc22 = MM_FMADD(a2, b, acc22);
 
         b = Bcol[3];
         acc30 = MM_FMADD(a0, b, acc30);
         acc31 = MM_FMADD(a1, b, acc31);
-        acc32 = MM_FMADD(a2, b, acc32);
 
         Bcol += B_WORDS_PER_ITER;
 
         a0 = MM_BROADCAST_Sx(&ARow[1]);
         a1 = MM_BROADCAST_Sx(&ARow[lda1+1]);
-        a2 = MM_BROADCAST_Sx(&ARow[lda2+1]);
 
         b = Bcol[0];
         acc00 = MM_FMADD(a0, b, acc00);
         acc01 = MM_FMADD(a1, b, acc01);
-        acc02 = MM_FMADD(a2, b, acc02);
 
         b = Bcol[1];
         acc10 = MM_FMADD(a0, b, acc10);
         acc11 = MM_FMADD(a1, b, acc11);
-        acc12 = MM_FMADD(a2, b, acc12);
 
         b = Bcol[2];
         acc20 = MM_FMADD(a0, b, acc20);
         acc21 = MM_FMADD(a1, b, acc21);
-        acc22 = MM_FMADD(a2, b, acc22);
 
         b = Bcol[3];
         acc30 = MM_FMADD(a0, b, acc30);
         acc31 = MM_FMADD(a1, b, acc31);
-        acc32 = MM_FMADD(a2, b, acc32);
 
         Bcol += B_WORDS_PER_ITER;
 
@@ -146,27 +128,22 @@ static void fma256_noncblas_sgemm_core_mj(
       if (kRemSteps != 0) {
         a0 = MM_BROADCAST_Sx(&ARow[0]);
         a1 = MM_BROADCAST_Sx(&ARow[lda1+0]);
-        a2 = MM_BROADCAST_Sx(&ARow[lda2+0]);
 
         b = Bcol[0];
         acc00 = MM_FMADD(a0, b, acc00);
         acc01 = MM_FMADD(a1, b, acc01);
-        acc02 = MM_FMADD(a2, b, acc02);
 
         b = Bcol[1];
         acc10 = MM_FMADD(a0, b, acc10);
         acc11 = MM_FMADD(a1, b, acc11);
-        acc12 = MM_FMADD(a2, b, acc12);
 
         b = Bcol[2];
         acc20 = MM_FMADD(a0, b, acc20);
         acc21 = MM_FMADD(a1, b, acc21);
-        acc22 = MM_FMADD(a2, b, acc22);
 
         b = Bcol[3];
         acc30 = MM_FMADD(a0, b, acc30);
         acc31 = MM_FMADD(a1, b, acc31);
-        acc32 = MM_FMADD(a2, b, acc32);
       }
 
       fp_vector_t alpha_ps = MM_BROADCAST_Sx(&pPrm->alpha);
@@ -181,8 +158,7 @@ static void fma256_noncblas_sgemm_core_mj(
           MM_STOREU_Px(&((ccol)[SIMD_FACTOR*3]), MM_FMADD((acc3), alpha_ps, MM_LOADU_Px(&((ccol)[SIMD_FACTOR*3]))));
 
           UPDATE_CCOL(CCol, acc00, acc10, acc20, acc30); CCol += ldc;
-          UPDATE_CCOL(CCol, acc01, acc11, acc21, acc31); CCol += ldc;
-          UPDATE_CCOL(CCol, acc02, acc12, acc22, acc32);
+          UPDATE_CCOL(CCol, acc01, acc11, acc21, acc31);
 
           #undef UPDATE_CCOL
         } else if (pPrm->c_option == C_OPTION_REPLACE) {
@@ -193,8 +169,7 @@ static void fma256_noncblas_sgemm_core_mj(
           MM_STOREU_Px(&((ccol)[SIMD_FACTOR*3]), MM_MUL_Px((acc3), alpha_ps));
 
           UPDATE_CCOL(CCol, acc00, acc10, acc20, acc30); CCol += ldc;
-          UPDATE_CCOL(CCol, acc01, acc11, acc21, acc31); CCol += ldc;
-          UPDATE_CCOL(CCol, acc02, acc12, acc22, acc32);
+          UPDATE_CCOL(CCol, acc01, acc11, acc21, acc31);
 
           #undef UPDATE_CCOL
         } else { // C_OPTION_MULTIPLY
@@ -206,8 +181,7 @@ static void fma256_noncblas_sgemm_core_mj(
           MM_STOREU_Px(&((ccol)[SIMD_FACTOR*3]), MM_FMADD((acc3), alpha_ps, MM_MUL_Px(beta_ps, MM_LOADU_Px(&((ccol)[SIMD_FACTOR*3])))));
 
           UPDATE_CCOL(CCol, acc00, acc10, acc20, acc30); CCol += ldc;
-          UPDATE_CCOL(CCol, acc01, acc11, acc21, acc31); CCol += ldc;
-          UPDATE_CCOL(CCol, acc02, acc12, acc22, acc32);
+          UPDATE_CCOL(CCol, acc01, acc11, acc21, acc31);
 
           #undef UPDATE_CCOL
         }
@@ -221,8 +195,7 @@ static void fma256_noncblas_sgemm_core_mj(
           MM_MASKSTOREU_Px(&((ccol)[SIMD_FACTOR*3]), mask, MM_FMADD((acc3), alpha_ps, MM_MASKLOADU_Px(&((ccol)[SIMD_FACTOR*3]), mask)));
 
           UPDATE_CCOL(CCol, acc00, acc10, acc20, acc30); CCol += ldc;
-          UPDATE_CCOL(CCol, acc01, acc11, acc21, acc31); CCol += ldc;
-          UPDATE_CCOL(CCol, acc02, acc12, acc22, acc32);
+          UPDATE_CCOL(CCol, acc01, acc11, acc21, acc31);
 
           #undef UPDATE_CCOL
         } else if (pPrm->c_option == C_OPTION_REPLACE) {
@@ -233,8 +206,7 @@ static void fma256_noncblas_sgemm_core_mj(
           MM_MASKSTOREU_Px(&((ccol)[SIMD_FACTOR*3]), mask, MM_MUL_Px((acc3), alpha_ps));
 
           UPDATE_CCOL(CCol, acc00, acc10, acc20, acc30); CCol += ldc;
-          UPDATE_CCOL(CCol, acc01, acc11, acc21, acc31); CCol += ldc;
-          UPDATE_CCOL(CCol, acc02, acc12, acc22, acc32);
+          UPDATE_CCOL(CCol, acc01, acc11, acc21, acc31);
 
           #undef UPDATE_CCOL
         } else { // C_OPTION_MULTIPLY
@@ -246,8 +218,7 @@ static void fma256_noncblas_sgemm_core_mj(
           MM_MASKSTOREU_Px(&((ccol)[SIMD_FACTOR*3]), mask, MM_FMADD((acc3), alpha_ps, MM_MUL_Px(beta_ps, MM_MASKLOADU_Px(&((ccol)[SIMD_FACTOR*3]), mask))));
 
           UPDATE_CCOL(CCol, acc00, acc10, acc20, acc30); CCol += ldc;
-          UPDATE_CCOL(CCol, acc01, acc11, acc21, acc31); CCol += ldc;
-          UPDATE_CCOL(CCol, acc02, acc12, acc22, acc32);
+          UPDATE_CCOL(CCol, acc01, acc11, acc21, acc31);
 
           #undef UPDATE_CCOL
         }
@@ -255,11 +226,11 @@ static void fma256_noncblas_sgemm_core_mj(
     }
   }
 
-  // handle remaining rows of A
+  // handle remaining row of A
   m += A_WORDS_PER_ITER - 1;
-  kFullSteps = (unsigned)(nRows-1) / 3;
-  kRemSteps  = (unsigned)(nRows-1) % 3;
-  for (; m > 0;  A += lda1, C += ldc, --m) {
+  if (m != 0) {
+    kFullSteps = (unsigned)(nRows-1) / 3;
+    kRemSteps  = (unsigned)(nRows-1) % 3;
     scalar_t* Crow = C;
     for (int b_it = 0; b_it <= b_itLast; Crow += B_WORDS_PER_ITER*SIMD_FACTOR, ++b_it) {
       const fp_vector_t* Bcol = &pPrm->bb[ldbb*b_it];

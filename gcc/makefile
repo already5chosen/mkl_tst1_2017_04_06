@@ -111,6 +111,7 @@ OBJLIST_AVX += avx256_noncblas_sgemm_n4.o
 OBJLIST_AVX += avx256_noncblas_sgemm_ns5.o
 OBJLIST_AVX += avx256_noncblas_sgemm_ns4.o
 OBJLIST_AVX += avx256_noncblas_sgemm_ns4cc.o
+OBJLIST_AVX += avx256_noncblas_sgemm_ns2x4.o
 OBJLIST_AVX += avx256_noncblas_sgemm_np5.o
 OBJLIST_AVX += avx256_noncblas_sgemm_np4.o
 OBJLIST_AVX += avx256_noncblas_sgemm_p.o
