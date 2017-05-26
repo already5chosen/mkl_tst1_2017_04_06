@@ -79,6 +79,8 @@ OBJLIST_FMA += fma256_noncblas_sgemm_o.o
 OBJLIST_FMA += fma256_noncblas_sgemm_p.o
 OBJLIST_FMA += fma256_noncblas_sgemm_ns4x3orig.o
 OBJLIST_FMA += fma256_noncblas_sgemm_ns4x3.o
+OBJLIST_FMA += fma256_noncblas_sgemm_ns3x4.o
+OBJLIST_FMA += fma256_noncblas_sgemm_ns2x4.o
 OBJLIST_FMA += fma256_noncblas_sgemm_n4x3.o
 
 
