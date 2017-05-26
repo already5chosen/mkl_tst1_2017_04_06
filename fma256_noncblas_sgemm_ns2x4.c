@@ -28,8 +28,8 @@ typedef __m128i int_vector4_t;
 enum {
  N_STEP_MULTIPLIER = 3,
  MxN_BLOCK_SZ      = 1600000,
- K_STEP            = 128,
- M_STEP            = 200,
+ K_STEP            = 80,
+ M_STEP            = 260,
 };
 
 #include "avxnnn_noncblas_sgemm_ns2x4_unroll2.c"
