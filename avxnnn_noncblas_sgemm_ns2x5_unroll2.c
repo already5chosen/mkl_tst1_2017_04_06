@@ -44,10 +44,11 @@ static void fma256_noncblas_sgemm_core_mj(
     C += ldc*A_WORDS_PER_ITER,
     m -= A_WORDS_PER_ITER) {
     scalar_t* Crow = C;
-    #define Prefetch3words(x) \
-      _mm_prefetch((char*)(x) + 0,                       _MM_HINT_T0); \
-      _mm_prefetch((char*)(x) + sizeof(fp_vector_t)*2,   _MM_HINT_T0); \
-      _mm_prefetch((char*)(x) + sizeof(fp_vector_t)*4-1, _MM_HINT_T0);
+    #define Prefetch5words(x) \
+      _mm_prefetch((char*)(x) + 0,                         _MM_HINT_T0); \
+      _mm_prefetch((char*)(x) + sizeof(fp_vector_t)*5*1/3, _MM_HINT_T0); \
+      _mm_prefetch((char*)(x) + sizeof(fp_vector_t)*5*2/3, _MM_HINT_T0); \
+      _mm_prefetch((char*)(x) + sizeof(fp_vector_t)*5-1,   _MM_HINT_T0);
     for (int b_it = 0; b_it <= b_itLast; Crow += B_WORDS_PER_ITER*SIMD_FACTOR, ++b_it) {
       const fp_vector_t* Bcol = &pPrm->bb[ldbb*b_it];
       const scalar_t*    ARow = A;
@@ -60,9 +61,9 @@ static void fma256_noncblas_sgemm_core_mj(
 
       b = Bcol[0];
       fp_vector_t acc00 = MM_MUL_Px(a0, b);
-      Prefetch3words(CPrefetch); CPrefetch += ldc;
+      Prefetch5words(CPrefetch); CPrefetch += ldc;
       fp_vector_t acc01 = MM_MUL_Px(a1, b);
-      Prefetch3words(CPrefetch); CPrefetch += ldc;
+      Prefetch5words(CPrefetch); CPrefetch += ldc;
 
       b = Bcol[1];
       fp_vector_t acc10 = MM_MUL_Px(a0, b);
@@ -272,9 +273,7 @@ static void fma256_noncblas_sgemm_core_mj(
       fp_vector_t acc31 = MM_SETZERO_Px();
       fp_vector_t acc41 = MM_SETZERO_Px();
 
-      _mm_prefetch((char*)(Crow)+0,                       _MM_HINT_T0);
-      _mm_prefetch((char*)(Crow)+sizeof(fp_vector_t)*5/2, _MM_HINT_T0);
-      _mm_prefetch((char*)(Crow)+sizeof(fp_vector_t)*5-1, _MM_HINT_T0);
+      Prefetch5words(Crow);
 
       int k = kFullSteps;
       do {
@@ -1468,18 +1467,21 @@ static void noncblas_sgemm_wide_n(
       int n;
       for (n = 0; n < nMj; n += n_step) {
         // process full-width major rectangles
-        uint64_t t0 = __rdtsc();
         CopyAndTransposeMj(&prm, &B[k*ldb + n], ldb, N_STEP_MULTIPLIER, delta_k);
+        uint64_t t0 = __rdtsc();
+        fma256_noncblas_sgemm_core_mj(&prm, &Crow[n], N_STEP_MULTIPLIER, delta_k);
         uint64_t t1 = __rdtsc();
         tt += t1 - t0;
-        fma256_noncblas_sgemm_core_mj(&prm, &Crow[n], N_STEP_MULTIPLIER, delta_k);
       }
       if (nwRemMj > 0) {
         // process rightmost major rectangle, either full or partial
         prm.masked_b_it = nwRemMj_masked_b_it;
         CopyAndTransposeMjWithMask(&prm, &B[k*ldb + n], ldb, nwRemMj, delta_k);
+        uint64_t t0 = __rdtsc();
         fma256_noncblas_sgemm_core_mj(&prm, &Crow[n], nwRemMj, delta_k);
         n += nwRemMj*B_WORDS_PER_ITER*SIMD_FACTOR;
+        uint64_t t1 = __rdtsc();
+        tt += t1 - t0;
       }
       if (nwRemMn > 0) {
         if (nwRemMn == 1) {

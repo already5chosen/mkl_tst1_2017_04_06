@@ -1,7 +1,7 @@
 enum {
  SIMD_FACTOR          = sizeof(fp_vector_t)/sizeof(scalar_t),
- A_WORDS_PER_ITER     = 4,
- B_WORDS_PER_ITER     = 3,
+ A_WORDS_PER_ITER     = 2,
+ B_WORDS_PER_ITER     = 5,
  SIMD_ELEM_PEC_COL_MJ = B_WORDS_PER_ITER*N_STEP_MULTIPLIER,
  n_step               = SIMD_ELEM_PEC_COL_MJ*SIMD_FACTOR,
 };
@@ -23,7 +23,7 @@ typedef struct {
   const scalar_t* A;
 } noncblas_sgemm_prm_t;
 
-// major core - inner loop processes 2 SIMD columns of B x 4 rows of A
+// major core - inner loop processes 4 SIMD columns of B x 2 rows of A
 static void fma256_noncblas_sgemm_core_mj(
  const noncblas_sgemm_prm_t* pPrm,
  scalar_t*                   C,
@@ -31,196 +31,239 @@ static void fma256_noncblas_sgemm_core_mj(
  int                         nRows)    // 7 < nRows    <= k_step
 {
   int ldc = pPrm->ldc;
-  int kFullSteps = (unsigned)(nRows-1) / 3;
-  int kRemSteps  = (unsigned)(nRows-1) % 3;
+  int kFullSteps = (unsigned)(nRows-1) / 4;
+  int kRemSteps  = (unsigned)(nRows-1) % 4;
   int ldbb   = B_WORDS_PER_ITER*nRows;
   int m;
   const scalar_t* A = pPrm->A;
   int b_itLast = n_bIters - 1;
   int lda1 = pPrm->lda;
   int lda2 = lda1+lda1;
-  int lda3 = lda2+lda1;
-  int lda4 = lda3+lda1;
   for (m = pPrm->M - A_WORDS_PER_ITER + 1; m > 0;
-    A += lda4,
+    A += lda2,
     C += ldc*A_WORDS_PER_ITER,
     m -= A_WORDS_PER_ITER) {
     scalar_t* Crow = C;
-    #define Prefetch3words(x) \
-      _mm_prefetch((char*)(x) + 0,                       _MM_HINT_T0); \
-      _mm_prefetch((char*)(x) + sizeof(fp_vector_t)/2*3, _MM_HINT_T0); \
-      _mm_prefetch((char*)(x) + sizeof(fp_vector_t)*3-1, _MM_HINT_T0);
+    #define Prefetch5words(x) \
+      _mm_prefetch((char*)(x) + 0,                         _MM_HINT_T0); \
+      _mm_prefetch((char*)(x) + sizeof(fp_vector_t)*5*1/3, _MM_HINT_T0); \
+      _mm_prefetch((char*)(x) + sizeof(fp_vector_t)*5*2/3, _MM_HINT_T0); \
+      _mm_prefetch((char*)(x) + sizeof(fp_vector_t)*5-1,   _MM_HINT_T0);
     for (int b_it = 0; b_it <= b_itLast; Crow += B_WORDS_PER_ITER*SIMD_FACTOR, ++b_it) {
       const fp_vector_t* Bcol = &pPrm->bb[ldbb*b_it];
-      const scalar_t*    ARow = (const scalar_t*)(A);
+      const scalar_t*    ARow = A;
       scalar_t* CPrefetch = Crow;
-      fp_vector_t a;
+      fp_vector_t b;
 
-      fp_vector_t b0 = Bcol[0];
-      fp_vector_t b1 = Bcol[1];
-      fp_vector_t b2 = Bcol[2];
-      Bcol += B_WORDS_PER_ITER;
-
-      a = MM_BROADCAST_Sx(&ARow[0]);
-      fp_vector_t acc00 = MM_MUL_Px(a, b0);
-      fp_vector_t acc10 = MM_MUL_Px(a, b1);
-      fp_vector_t acc20 = MM_MUL_Px(a, b2);
-      Prefetch3words(CPrefetch); CPrefetch += ldc;
-
-      a = MM_BROADCAST_Sx(&ARow[lda1+0]);
-      fp_vector_t acc01 = MM_MUL_Px(a, b0);
-      fp_vector_t acc11 = MM_MUL_Px(a, b1);
-      fp_vector_t acc21 = MM_MUL_Px(a, b2);
-      Prefetch3words(CPrefetch); CPrefetch += ldc;
-
-      a = MM_BROADCAST_Sx(&ARow[lda2+0]);
-      fp_vector_t acc02 = MM_MUL_Px(a, b0);
-      fp_vector_t acc12 = MM_MUL_Px(a, b1);
-      fp_vector_t acc22 = MM_MUL_Px(a, b2);
-      Prefetch3words(CPrefetch); CPrefetch += ldc;
-
-      a = MM_BROADCAST_Sx(&ARow[lda3+0]);
-      fp_vector_t acc03 = MM_MUL_Px(a, b0);
-      fp_vector_t acc13 = MM_MUL_Px(a, b1);
-      fp_vector_t acc23 = MM_MUL_Px(a, b2);
-      Prefetch3words(CPrefetch); CPrefetch += ldc;
-
+      fp_vector_t a0 = MM_BROADCAST_Sx(&ARow[0]);
+      fp_vector_t a1 = MM_BROADCAST_Sx(&ARow[lda1+0]);
       ARow += 1;
 
-      //__asm volatile("": : :"memory"); // prevent CLANG from screwing register allocation
+      b = Bcol[0];
+      fp_vector_t acc00 = MM_MUL_Px(a0, b);
+      Prefetch5words(CPrefetch); CPrefetch += ldc;
+      fp_vector_t acc01 = MM_MUL_Px(a1, b);
+      Prefetch5words(CPrefetch); CPrefetch += ldc;
+
+      b = Bcol[1];
+      fp_vector_t acc10 = MM_MUL_Px(a0, b);
+      fp_vector_t acc11 = MM_MUL_Px(a1, b);
+
+      b = Bcol[2];
+      fp_vector_t acc20 = MM_MUL_Px(a0, b);
+      fp_vector_t acc21 = MM_MUL_Px(a1, b);
+
+      b = Bcol[3];
+      fp_vector_t acc30 = MM_MUL_Px(a0, b);
+      fp_vector_t acc31 = MM_MUL_Px(a1, b);
+
+      b = Bcol[4];
+      fp_vector_t acc40 = MM_MUL_Px(a0, b);
+      fp_vector_t acc41 = MM_MUL_Px(a1, b);
+
+      Bcol += B_WORDS_PER_ITER;
 
       int k = kFullSteps;
       do {
-        b0 = Bcol[0];
-        b1 = Bcol[1];
-        b2 = Bcol[2];
+        a0 = MM_BROADCAST_Sx(&ARow[0]);
+        a1 = MM_BROADCAST_Sx(&ARow[lda1+0]);
+
+        b = Bcol[0];
+        acc00 = MM_FMADD(a0, b, acc00);
+        acc01 = MM_FMADD(a1, b, acc01);
+
+        b = Bcol[1];
+        acc10 = MM_FMADD(a0, b, acc10);
+        acc11 = MM_FMADD(a1, b, acc11);
+
+        b = Bcol[2];
+        acc20 = MM_FMADD(a0, b, acc20);
+        acc21 = MM_FMADD(a1, b, acc21);
+
+        b = Bcol[3];
+        acc30 = MM_FMADD(a0, b, acc30);
+        acc31 = MM_FMADD(a1, b, acc31);
+
+        b = Bcol[4];
+        acc40 = MM_FMADD(a0, b, acc40);
+        acc41 = MM_FMADD(a1, b, acc41);
+
         Bcol += B_WORDS_PER_ITER;
 
-        a = MM_BROADCAST_Sx(&ARow[0]);
-        acc00 = MM_FMADD(a, b0, acc00);
-        acc10 = MM_FMADD(a, b1, acc10);
-        acc20 = MM_FMADD(a, b2, acc20);
+        a0 = MM_BROADCAST_Sx(&ARow[1]);
+        a1 = MM_BROADCAST_Sx(&ARow[lda1+1]);
 
-        a = MM_BROADCAST_Sx(&ARow[lda1+0]);
-        acc01 = MM_FMADD(a, b0, acc01);
-        acc11 = MM_FMADD(a, b1, acc11);
-        acc21 = MM_FMADD(a, b2, acc21);
+        b = Bcol[0];
+        acc00 = MM_FMADD(a0, b, acc00);
+        acc01 = MM_FMADD(a1, b, acc01);
 
-        a = MM_BROADCAST_Sx(&ARow[lda2+0]);
-        acc02 = MM_FMADD(a, b0, acc02);
-        acc12 = MM_FMADD(a, b1, acc12);
-        acc22 = MM_FMADD(a, b2, acc22);
+        b = Bcol[1];
+        acc10 = MM_FMADD(a0, b, acc10);
+        acc11 = MM_FMADD(a1, b, acc11);
 
-        a = MM_BROADCAST_Sx(&ARow[lda3+0]);
-        acc03 = MM_FMADD(a, b0, acc03);
-        acc13 = MM_FMADD(a, b1, acc13);
-        acc23 = MM_FMADD(a, b2, acc23);
-        //__asm volatile("": : :"memory"); // prevent CLANG from screwing register allocation
+        b = Bcol[2];
+        acc20 = MM_FMADD(a0, b, acc20);
+        acc21 = MM_FMADD(a1, b, acc21);
 
-        b0 = Bcol[0];
-        b1 = Bcol[1];
-        b2 = Bcol[2];
+        b = Bcol[3];
+        acc30 = MM_FMADD(a0, b, acc30);
+        acc31 = MM_FMADD(a1, b, acc31);
+
+        b = Bcol[4];
+        acc40 = MM_FMADD(a0, b, acc40);
+        acc41 = MM_FMADD(a1, b, acc41);
+
         Bcol += B_WORDS_PER_ITER;
 
-        a = MM_BROADCAST_Sx(&ARow[1]);
-        acc00 = MM_FMADD(a, b0, acc00);
-        acc10 = MM_FMADD(a, b1, acc10);
-        acc20 = MM_FMADD(a, b2, acc20);
+        a0 = MM_BROADCAST_Sx(&ARow[2]);
+        a1 = MM_BROADCAST_Sx(&ARow[lda1+2]);
 
-        a = MM_BROADCAST_Sx(&ARow[lda1+1]);
-        acc01 = MM_FMADD(a, b0, acc01);
-        acc11 = MM_FMADD(a, b1, acc11);
-        acc21 = MM_FMADD(a, b2, acc21);
+        b = Bcol[0];
+        acc00 = MM_FMADD(a0, b, acc00);
+        acc01 = MM_FMADD(a1, b, acc01);
 
-        a = MM_BROADCAST_Sx(&ARow[lda2+1]);
-        acc02 = MM_FMADD(a, b0, acc02);
-        acc12 = MM_FMADD(a, b1, acc12);
-        acc22 = MM_FMADD(a, b2, acc22);
+        b = Bcol[1];
+        acc10 = MM_FMADD(a0, b, acc10);
+        acc11 = MM_FMADD(a1, b, acc11);
 
-        a = MM_BROADCAST_Sx(&ARow[lda3+1]);
-        acc03 = MM_FMADD(a, b0, acc03);
-        acc13 = MM_FMADD(a, b1, acc13);
-        acc23 = MM_FMADD(a, b2, acc23);
+        b = Bcol[2];
+        acc20 = MM_FMADD(a0, b, acc20);
+        acc21 = MM_FMADD(a1, b, acc21);
 
-        b0 = Bcol[0];
-        b1 = Bcol[1];
-        b2 = Bcol[2];
+        b = Bcol[3];
+        acc30 = MM_FMADD(a0, b, acc30);
+        acc31 = MM_FMADD(a1, b, acc31);
+
+        b = Bcol[4];
+        acc40 = MM_FMADD(a0, b, acc40);
+        acc41 = MM_FMADD(a1, b, acc41);
+
         Bcol += B_WORDS_PER_ITER;
 
-        a = MM_BROADCAST_Sx(&ARow[2]);
-        acc00 = MM_FMADD(a, b0, acc00);
-        acc10 = MM_FMADD(a, b1, acc10);
-        acc20 = MM_FMADD(a, b2, acc20);
+        a0 = MM_BROADCAST_Sx(&ARow[3]);
+        a1 = MM_BROADCAST_Sx(&ARow[lda1+3]);
 
-        a = MM_BROADCAST_Sx(&ARow[lda1+2]);
-        acc01 = MM_FMADD(a, b0, acc01);
-        acc11 = MM_FMADD(a, b1, acc11);
-        acc21 = MM_FMADD(a, b2, acc21);
+        b = Bcol[0];
+        acc00 = MM_FMADD(a0, b, acc00);
+        acc01 = MM_FMADD(a1, b, acc01);
 
-        a = MM_BROADCAST_Sx(&ARow[lda2+2]);
-        acc02 = MM_FMADD(a, b0, acc02);
-        acc12 = MM_FMADD(a, b1, acc12);
-        acc22 = MM_FMADD(a, b2, acc22);
+        b = Bcol[1];
+        acc10 = MM_FMADD(a0, b, acc10);
+        acc11 = MM_FMADD(a1, b, acc11);
 
-        a = MM_BROADCAST_Sx(&ARow[lda3+2]);
-        acc03 = MM_FMADD(a, b0, acc03);
-        acc13 = MM_FMADD(a, b1, acc13);
-        acc23 = MM_FMADD(a, b2, acc23);
+        b = Bcol[2];
+        acc20 = MM_FMADD(a0, b, acc20);
+        acc21 = MM_FMADD(a1, b, acc21);
 
-        ARow += 3;
+        b = Bcol[3];
+        acc30 = MM_FMADD(a0, b, acc30);
+        acc31 = MM_FMADD(a1, b, acc31);
+
+        b = Bcol[4];
+        acc40 = MM_FMADD(a0, b, acc40);
+        acc41 = MM_FMADD(a1, b, acc41);
+
+        Bcol += B_WORDS_PER_ITER;
+
+        ARow += 2;
       } while (--k);
 
       if (kRemSteps != 0) {
-        b0 = Bcol[0];
-        b1 = Bcol[1];
-        b2 = Bcol[2];
-        Bcol += B_WORDS_PER_ITER;
+        a0 = MM_BROADCAST_Sx(&ARow[0]);
+        a1 = MM_BROADCAST_Sx(&ARow[lda1+0]);
 
-        a = MM_BROADCAST_Sx(&ARow[0]);
-        acc00 = MM_FMADD(a, b0, acc00);
-        acc10 = MM_FMADD(a, b1, acc10);
-        acc20 = MM_FMADD(a, b2, acc20);
+        b = Bcol[0];
+        acc00 = MM_FMADD(a0, b, acc00);
+        acc01 = MM_FMADD(a1, b, acc01);
 
-        a = MM_BROADCAST_Sx(&ARow[lda1+0]);
-        acc01 = MM_FMADD(a, b0, acc01);
-        acc11 = MM_FMADD(a, b1, acc11);
-        acc21 = MM_FMADD(a, b2, acc21);
+        b = Bcol[1];
+        acc10 = MM_FMADD(a0, b, acc10);
+        acc11 = MM_FMADD(a1, b, acc11);
 
-        a = MM_BROADCAST_Sx(&ARow[lda2+0]);
-        acc02 = MM_FMADD(a, b0, acc02);
-        acc12 = MM_FMADD(a, b1, acc12);
-        acc22 = MM_FMADD(a, b2, acc22);
+        b = Bcol[2];
+        acc20 = MM_FMADD(a0, b, acc20);
+        acc21 = MM_FMADD(a1, b, acc21);
 
-        a = MM_BROADCAST_Sx(&ARow[lda3+0]);
-        acc03 = MM_FMADD(a, b0, acc03);
-        acc13 = MM_FMADD(a, b1, acc13);
-        acc23 = MM_FMADD(a, b2, acc23);
+        b = Bcol[3];
+        acc30 = MM_FMADD(a0, b, acc30);
+        acc31 = MM_FMADD(a1, b, acc31);
+
+        b = Bcol[4];
+        acc40 = MM_FMADD(a0, b, acc40);
+        acc41 = MM_FMADD(a1, b, acc41);
 
         if (kRemSteps != 1) {
-          b0 = Bcol[0];
-          b1 = Bcol[1];
-          b2 = Bcol[2];
           Bcol += B_WORDS_PER_ITER;
 
-          a = MM_BROADCAST_Sx(&ARow[1]);
-          acc00 = MM_FMADD(a, b0, acc00);
-          acc10 = MM_FMADD(a, b1, acc10);
-          acc20 = MM_FMADD(a, b2, acc20);
+          a0 = MM_BROADCAST_Sx(&ARow[1]);
+          a1 = MM_BROADCAST_Sx(&ARow[lda1+1]);
 
-          a = MM_BROADCAST_Sx(&ARow[lda1+1]);
-          acc01 = MM_FMADD(a, b0, acc01);
-          acc11 = MM_FMADD(a, b1, acc11);
-          acc21 = MM_FMADD(a, b2, acc21);
+          b = Bcol[0];
+          acc00 = MM_FMADD(a0, b, acc00);
+          acc01 = MM_FMADD(a1, b, acc01);
 
-          a = MM_BROADCAST_Sx(&ARow[lda2+1]);
-          acc02 = MM_FMADD(a, b0, acc02);
-          acc12 = MM_FMADD(a, b1, acc12);
-          acc22 = MM_FMADD(a, b2, acc22);
+          b = Bcol[1];
+          acc10 = MM_FMADD(a0, b, acc10);
+          acc11 = MM_FMADD(a1, b, acc11);
 
-          a = MM_BROADCAST_Sx(&ARow[lda3+1]);
-          acc03 = MM_FMADD(a, b0, acc03);
-          acc13 = MM_FMADD(a, b1, acc13);
-          acc23 = MM_FMADD(a, b2, acc23);
+          b = Bcol[2];
+          acc20 = MM_FMADD(a0, b, acc20);
+          acc21 = MM_FMADD(a1, b, acc21);
+
+          b = Bcol[3];
+          acc30 = MM_FMADD(a0, b, acc30);
+          acc31 = MM_FMADD(a1, b, acc31);
+
+          b = Bcol[4];
+          acc40 = MM_FMADD(a0, b, acc40);
+          acc41 = MM_FMADD(a1, b, acc41);
+
+          if (kRemSteps != 2) {
+            Bcol += B_WORDS_PER_ITER;
+
+            a0 = MM_BROADCAST_Sx(&ARow[2]);
+            a1 = MM_BROADCAST_Sx(&ARow[lda1+2]);
+
+            b = Bcol[0];
+            acc00 = MM_FMADD(a0, b, acc00);
+            acc01 = MM_FMADD(a1, b, acc01);
+
+            b = Bcol[1];
+            acc10 = MM_FMADD(a0, b, acc10);
+            acc11 = MM_FMADD(a1, b, acc11);
+
+            b = Bcol[2];
+            acc20 = MM_FMADD(a0, b, acc20);
+            acc21 = MM_FMADD(a1, b, acc21);
+
+            b = Bcol[3];
+            acc30 = MM_FMADD(a0, b, acc30);
+            acc31 = MM_FMADD(a1, b, acc31);
+
+            b = Bcol[4];
+            acc40 = MM_FMADD(a0, b, acc40);
+            acc41 = MM_FMADD(a1, b, acc41);
+          }
         }
       }
 
@@ -229,80 +272,80 @@ static void fma256_noncblas_sgemm_core_mj(
 
       if (b_it != pPrm->masked_b_it) {
         if (pPrm->c_option == C_OPTION_UPDATE) {
-          #define UPDATE_CCOL(ccol, acc0, acc1, acc2) \
+          #define UPDATE_CCOL(ccol, acc0, acc1, acc2, acc3, acc4) \
           MM_STOREU_Px(&((ccol)[SIMD_FACTOR*0]), MM_FMADD((acc0), alpha_ps, MM_LOADU_Px(&((ccol)[SIMD_FACTOR*0])))); \
           MM_STOREU_Px(&((ccol)[SIMD_FACTOR*1]), MM_FMADD((acc1), alpha_ps, MM_LOADU_Px(&((ccol)[SIMD_FACTOR*1])))); \
-          MM_STOREU_Px(&((ccol)[SIMD_FACTOR*2]), MM_FMADD((acc2), alpha_ps, MM_LOADU_Px(&((ccol)[SIMD_FACTOR*2]))));
+          MM_STOREU_Px(&((ccol)[SIMD_FACTOR*2]), MM_FMADD((acc2), alpha_ps, MM_LOADU_Px(&((ccol)[SIMD_FACTOR*2])))); \
+          MM_STOREU_Px(&((ccol)[SIMD_FACTOR*3]), MM_FMADD((acc3), alpha_ps, MM_LOADU_Px(&((ccol)[SIMD_FACTOR*3])))); \
+          MM_STOREU_Px(&((ccol)[SIMD_FACTOR*4]), MM_FMADD((acc4), alpha_ps, MM_LOADU_Px(&((ccol)[SIMD_FACTOR*4]))));
 
-          UPDATE_CCOL(CCol, acc00, acc10, acc20); CCol += ldc;
-          UPDATE_CCOL(CCol, acc01, acc11, acc21); CCol += ldc;
-          UPDATE_CCOL(CCol, acc02, acc12, acc22); CCol += ldc;
-          UPDATE_CCOL(CCol, acc03, acc13, acc23);
+          UPDATE_CCOL(CCol, acc00, acc10, acc20, acc30, acc40); CCol += ldc;
+          UPDATE_CCOL(CCol, acc01, acc11, acc21, acc31, acc41);
 
           #undef UPDATE_CCOL
         } else if (pPrm->c_option == C_OPTION_REPLACE) {
-          #define UPDATE_CCOL(ccol, acc0, acc1, acc2) \
+          #define UPDATE_CCOL(ccol, acc0, acc1, acc2, acc3, acc4) \
           MM_STOREU_Px(&((ccol)[SIMD_FACTOR*0]), MM_MUL_Px((acc0), alpha_ps)); \
           MM_STOREU_Px(&((ccol)[SIMD_FACTOR*1]), MM_MUL_Px((acc1), alpha_ps)); \
-          MM_STOREU_Px(&((ccol)[SIMD_FACTOR*2]), MM_MUL_Px((acc2), alpha_ps));
+          MM_STOREU_Px(&((ccol)[SIMD_FACTOR*2]), MM_MUL_Px((acc2), alpha_ps)); \
+          MM_STOREU_Px(&((ccol)[SIMD_FACTOR*3]), MM_MUL_Px((acc3), alpha_ps)); \
+          MM_STOREU_Px(&((ccol)[SIMD_FACTOR*4]), MM_MUL_Px((acc4), alpha_ps));
 
-          UPDATE_CCOL(CCol, acc00, acc10, acc20); CCol += ldc;
-          UPDATE_CCOL(CCol, acc01, acc11, acc21); CCol += ldc;
-          UPDATE_CCOL(CCol, acc02, acc12, acc22); CCol += ldc;
-          UPDATE_CCOL(CCol, acc03, acc13, acc23);
+          UPDATE_CCOL(CCol, acc00, acc10, acc20, acc30, acc40); CCol += ldc;
+          UPDATE_CCOL(CCol, acc01, acc11, acc21, acc31, acc41);
 
           #undef UPDATE_CCOL
         } else { // C_OPTION_MULTIPLY
           fp_vector_t beta_ps = MM_BROADCAST_Sx(&pPrm->beta);
-          #define UPDATE_CCOL(ccol, acc0, acc1, acc2) \
+          #define UPDATE_CCOL(ccol, acc0, acc1, acc2, acc3, acc4) \
           MM_STOREU_Px(&((ccol)[SIMD_FACTOR*0]), MM_FMADD((acc0), alpha_ps, MM_MUL_Px(beta_ps, MM_LOADU_Px(&((ccol)[SIMD_FACTOR*0]))))); \
           MM_STOREU_Px(&((ccol)[SIMD_FACTOR*1]), MM_FMADD((acc1), alpha_ps, MM_MUL_Px(beta_ps, MM_LOADU_Px(&((ccol)[SIMD_FACTOR*1]))))); \
-          MM_STOREU_Px(&((ccol)[SIMD_FACTOR*2]), MM_FMADD((acc2), alpha_ps, MM_MUL_Px(beta_ps, MM_LOADU_Px(&((ccol)[SIMD_FACTOR*2])))));
+          MM_STOREU_Px(&((ccol)[SIMD_FACTOR*2]), MM_FMADD((acc2), alpha_ps, MM_MUL_Px(beta_ps, MM_LOADU_Px(&((ccol)[SIMD_FACTOR*2]))))); \
+          MM_STOREU_Px(&((ccol)[SIMD_FACTOR*3]), MM_FMADD((acc3), alpha_ps, MM_MUL_Px(beta_ps, MM_LOADU_Px(&((ccol)[SIMD_FACTOR*3]))))); \
+          MM_STOREU_Px(&((ccol)[SIMD_FACTOR*4]), MM_FMADD((acc4), alpha_ps, MM_MUL_Px(beta_ps, MM_LOADU_Px(&((ccol)[SIMD_FACTOR*4])))));
 
-          UPDATE_CCOL(CCol, acc00, acc10, acc20); CCol += ldc;
-          UPDATE_CCOL(CCol, acc01, acc11, acc21); CCol += ldc;
-          UPDATE_CCOL(CCol, acc02, acc12, acc22); CCol += ldc;
-          UPDATE_CCOL(CCol, acc03, acc13, acc23);
+          UPDATE_CCOL(CCol, acc00, acc10, acc20, acc30, acc40); CCol += ldc;
+          UPDATE_CCOL(CCol, acc01, acc11, acc21, acc31, acc41);
 
           #undef UPDATE_CCOL
         }
       } else {
         int_vector_t mask = pPrm->mask_n;
         if (pPrm->c_option == C_OPTION_UPDATE) {
-          #define UPDATE_CCOL(ccol, acc0, acc1, acc2) \
+          #define UPDATE_CCOL(ccol, acc0, acc1, acc2, acc3, acc4) \
           MM_STOREU_Px    (&((ccol)[SIMD_FACTOR*0]),       MM_FMADD((acc0), alpha_ps, MM_LOADU_Px    (&((ccol)[SIMD_FACTOR*0])))); \
           MM_STOREU_Px    (&((ccol)[SIMD_FACTOR*1]),       MM_FMADD((acc1), alpha_ps, MM_LOADU_Px    (&((ccol)[SIMD_FACTOR*1])))); \
-          MM_MASKSTOREU_Px(&((ccol)[SIMD_FACTOR*2]), mask, MM_FMADD((acc2), alpha_ps, MM_MASKLOADU_Px(&((ccol)[SIMD_FACTOR*2]), mask)));
+          MM_STOREU_Px    (&((ccol)[SIMD_FACTOR*2]),       MM_FMADD((acc2), alpha_ps, MM_LOADU_Px    (&((ccol)[SIMD_FACTOR*2])))); \
+          MM_STOREU_Px    (&((ccol)[SIMD_FACTOR*3]),       MM_FMADD((acc3), alpha_ps, MM_LOADU_Px    (&((ccol)[SIMD_FACTOR*3])))); \
+          MM_MASKSTOREU_Px(&((ccol)[SIMD_FACTOR*4]), mask, MM_FMADD((acc4), alpha_ps, MM_MASKLOADU_Px(&((ccol)[SIMD_FACTOR*4]), mask)));
 
-          UPDATE_CCOL(CCol, acc00, acc10, acc20); CCol += ldc;
-          UPDATE_CCOL(CCol, acc01, acc11, acc21); CCol += ldc;
-          UPDATE_CCOL(CCol, acc02, acc12, acc22); CCol += ldc;
-          UPDATE_CCOL(CCol, acc03, acc13, acc23);
+          UPDATE_CCOL(CCol, acc00, acc10, acc20, acc30, acc40); CCol += ldc;
+          UPDATE_CCOL(CCol, acc01, acc11, acc21, acc31, acc41);
 
           #undef UPDATE_CCOL
         } else if (pPrm->c_option == C_OPTION_REPLACE) {
-          #define UPDATE_CCOL(ccol, acc0, acc1, acc2) \
+          #define UPDATE_CCOL(ccol, acc0, acc1, acc2, acc3, acc4) \
           MM_STOREU_Px    (&((ccol)[SIMD_FACTOR*0]),       MM_MUL_Px((acc0), alpha_ps)); \
           MM_STOREU_Px    (&((ccol)[SIMD_FACTOR*1]),       MM_MUL_Px((acc1), alpha_ps)); \
-          MM_MASKSTOREU_Px(&((ccol)[SIMD_FACTOR*2]), mask, MM_MUL_Px((acc2), alpha_ps));
+          MM_STOREU_Px    (&((ccol)[SIMD_FACTOR*2]),       MM_MUL_Px((acc2), alpha_ps)); \
+          MM_STOREU_Px    (&((ccol)[SIMD_FACTOR*3]),       MM_MUL_Px((acc3), alpha_ps)); \
+          MM_MASKSTOREU_Px(&((ccol)[SIMD_FACTOR*4]), mask, MM_MUL_Px((acc4), alpha_ps));
 
-          UPDATE_CCOL(CCol, acc00, acc10, acc20); CCol += ldc;
-          UPDATE_CCOL(CCol, acc01, acc11, acc21); CCol += ldc;
-          UPDATE_CCOL(CCol, acc02, acc12, acc22); CCol += ldc;
-          UPDATE_CCOL(CCol, acc03, acc13, acc23);
+          UPDATE_CCOL(CCol, acc00, acc10, acc20, acc30, acc40); CCol += ldc;
+          UPDATE_CCOL(CCol, acc01, acc11, acc21, acc31, acc41);
 
           #undef UPDATE_CCOL
         } else { // C_OPTION_MULTIPLY
           fp_vector_t beta_ps = MM_BROADCAST_Sx(&pPrm->beta);
-          #define UPDATE_CCOL(ccol, acc0, acc1, acc2) \
+          #define UPDATE_CCOL(ccol, acc0, acc1, acc2, acc3, acc4) \
           MM_STOREU_Px    (&((ccol)[SIMD_FACTOR*0]),       MM_FMADD((acc0), alpha_ps, MM_MUL_Px(beta_ps, MM_LOADU_Px    (&((ccol)[SIMD_FACTOR*0]))))); \
           MM_STOREU_Px    (&((ccol)[SIMD_FACTOR*1]),       MM_FMADD((acc1), alpha_ps, MM_MUL_Px(beta_ps, MM_LOADU_Px    (&((ccol)[SIMD_FACTOR*1]))))); \
-          MM_MASKSTOREU_Px(&((ccol)[SIMD_FACTOR*2]), mask, MM_FMADD((acc2), alpha_ps, MM_MUL_Px(beta_ps, MM_MASKLOADU_Px(&((ccol)[SIMD_FACTOR*2]), mask))));
+          MM_STOREU_Px    (&((ccol)[SIMD_FACTOR*2]),       MM_FMADD((acc2), alpha_ps, MM_MUL_Px(beta_ps, MM_LOADU_Px    (&((ccol)[SIMD_FACTOR*2]))))); \
+          MM_STOREU_Px    (&((ccol)[SIMD_FACTOR*3]),       MM_FMADD((acc3), alpha_ps, MM_MUL_Px(beta_ps, MM_LOADU_Px    (&((ccol)[SIMD_FACTOR*3]))))); \
+          MM_MASKSTOREU_Px(&((ccol)[SIMD_FACTOR*4]), mask, MM_FMADD((acc4), alpha_ps, MM_MUL_Px(beta_ps, MM_MASKLOADU_Px(&((ccol)[SIMD_FACTOR*4]), mask))));
 
-          UPDATE_CCOL(CCol, acc00, acc10, acc20); CCol += ldc;
-          UPDATE_CCOL(CCol, acc01, acc11, acc21); CCol += ldc;
-          UPDATE_CCOL(CCol, acc02, acc12, acc22); CCol += ldc;
-          UPDATE_CCOL(CCol, acc03, acc13, acc23);
+          UPDATE_CCOL(CCol, acc00, acc10, acc20, acc30, acc40); CCol += ldc;
+          UPDATE_CCOL(CCol, acc01, acc11, acc21, acc31, acc41);
 
           #undef UPDATE_CCOL
         }
@@ -310,11 +353,11 @@ static void fma256_noncblas_sgemm_core_mj(
     }
   }
 
-  // handle remaining rows of A
+  // handle remaining row of A
   m += A_WORDS_PER_ITER - 1;
-  kFullSteps = (unsigned)(nRows-1) / 4;
-  kRemSteps  = (unsigned)(nRows-1) % 4;
-  for (; m > 0;  A += lda1, C += ldc, --m) {
+  if (m != 0) {
+    kFullSteps = (unsigned)(nRows-1) / 2;
+    kRemSteps  = (unsigned)(nRows-1) % 2;
     scalar_t* Crow = C;
     for (int b_it = 0; b_it <= b_itLast; Crow += B_WORDS_PER_ITER*SIMD_FACTOR, ++b_it) {
       const fp_vector_t* Bcol = &pPrm->bb[ldbb*b_it];
@@ -324,23 +367,17 @@ static void fma256_noncblas_sgemm_core_mj(
       fp_vector_t acc00 = MM_MUL_Px(a, Bcol[0]);
       fp_vector_t acc10 = MM_MUL_Px(a, Bcol[1]);
       fp_vector_t acc20 = MM_MUL_Px(a, Bcol[2]);
+      fp_vector_t acc30 = MM_MUL_Px(a, Bcol[3]);
+      fp_vector_t acc40 = MM_MUL_Px(a, Bcol[4]);
       Bcol += B_WORDS_PER_ITER;
 
       fp_vector_t acc01 = MM_SETZERO_Px();
       fp_vector_t acc11 = MM_SETZERO_Px();
       fp_vector_t acc21 = MM_SETZERO_Px();
+      fp_vector_t acc31 = MM_SETZERO_Px();
+      fp_vector_t acc41 = MM_SETZERO_Px();
 
-      fp_vector_t acc02 = MM_SETZERO_Px();
-      fp_vector_t acc12 = MM_SETZERO_Px();
-      fp_vector_t acc22 = MM_SETZERO_Px();
-
-      fp_vector_t acc03 = MM_SETZERO_Px();
-      fp_vector_t acc13 = MM_SETZERO_Px();
-      fp_vector_t acc23 = MM_SETZERO_Px();
-
-      _mm_prefetch((char*)(Crow)+0,                       _MM_HINT_T0);
-      _mm_prefetch((char*)(Crow)+sizeof(fp_vector_t)/2*3, _MM_HINT_T0);
-      _mm_prefetch((char*)(Crow)+sizeof(fp_vector_t)*3-1, _MM_HINT_T0);
+      Prefetch5words(Crow);
 
       int k = kFullSteps;
       do {
@@ -348,27 +385,19 @@ static void fma256_noncblas_sgemm_core_mj(
         acc00 = MM_FMADD(a, Bcol[0], acc00);
         acc10 = MM_FMADD(a, Bcol[1], acc10);
         acc20 = MM_FMADD(a, Bcol[2], acc20);
+        acc30 = MM_FMADD(a, Bcol[3], acc30);
+        acc40 = MM_FMADD(a, Bcol[4], acc40);
         Bcol += B_WORDS_PER_ITER;
 
         a = MM_BROADCAST_Sx(&ARow[1]);
         acc01 = MM_FMADD(a, Bcol[0], acc01);
         acc11 = MM_FMADD(a, Bcol[1], acc11);
         acc21 = MM_FMADD(a, Bcol[2], acc21);
+        acc31 = MM_FMADD(a, Bcol[3], acc31);
+        acc41 = MM_FMADD(a, Bcol[4], acc41);
         Bcol += B_WORDS_PER_ITER;
 
-        a = MM_BROADCAST_Sx(&ARow[2]);
-        acc02 = MM_FMADD(a, Bcol[0], acc02);
-        acc12 = MM_FMADD(a, Bcol[1], acc12);
-        acc22 = MM_FMADD(a, Bcol[2], acc22);
-        Bcol += B_WORDS_PER_ITER;
-
-        a = MM_BROADCAST_Sx(&ARow[3]);
-        acc03 = MM_FMADD(a, Bcol[0], acc03);
-        acc13 = MM_FMADD(a, Bcol[1], acc13);
-        acc23 = MM_FMADD(a, Bcol[2], acc23);
-        Bcol += B_WORDS_PER_ITER;
-
-        ARow += 4;
+        ARow += 2;
       } while (--k);
 
       if (kRemSteps != 0) {
@@ -378,36 +407,15 @@ static void fma256_noncblas_sgemm_core_mj(
         acc00 = MM_FMADD(a, Bcol[0], acc00);
         acc10 = MM_FMADD(a, Bcol[1], acc10);
         acc20 = MM_FMADD(a, Bcol[2], acc20);
-        if (kRemSteps != 1) {
-          Bcol += B_WORDS_PER_ITER;
-
-          a = MM_BROADCAST_Sx(&ARow[1]);
-          acc01 = MM_FMADD(a, Bcol[0], acc01);
-          acc11 = MM_FMADD(a, Bcol[1], acc11);
-          acc21 = MM_FMADD(a, Bcol[2], acc21);
-          if (kRemSteps != 2) {
-            Bcol += B_WORDS_PER_ITER;
-
-            a = MM_BROADCAST_Sx(&ARow[2]);
-            acc02 = MM_FMADD(a, Bcol[0], acc02);
-            acc12 = MM_FMADD(a, Bcol[1], acc12);
-            acc22 = MM_FMADD(a, Bcol[2], acc22);
-          }
-        }
+        acc30 = MM_FMADD(a, Bcol[3], acc30);
+        acc40 = MM_FMADD(a, Bcol[4], acc40);
       }
 
       acc00 = MM_ADD_Px(acc00, acc01);
-      acc02 = MM_ADD_Px(acc02, acc03);
-
       acc10 = MM_ADD_Px(acc10, acc11);
-      acc12 = MM_ADD_Px(acc12, acc13);
-
       acc20 = MM_ADD_Px(acc20, acc21);
-      acc22 = MM_ADD_Px(acc22, acc23);
-
-      acc00 = MM_ADD_Px(acc00, acc02);
-      acc10 = MM_ADD_Px(acc10, acc12);
-      acc20 = MM_ADD_Px(acc20, acc22);
+      acc30 = MM_ADD_Px(acc30, acc31);
+      acc40 = MM_ADD_Px(acc40, acc41);
 
       fp_vector_t alpha_ps = MM_BROADCAST_Sx(&pPrm->alpha);
       if (b_it != pPrm->masked_b_it) {
@@ -415,31 +423,43 @@ static void fma256_noncblas_sgemm_core_mj(
           MM_STOREU_Px(&Crow[SIMD_FACTOR*0], MM_FMADD(acc00, alpha_ps, MM_LOADU_Px(&Crow[SIMD_FACTOR*0])));
           MM_STOREU_Px(&Crow[SIMD_FACTOR*1], MM_FMADD(acc10, alpha_ps, MM_LOADU_Px(&Crow[SIMD_FACTOR*1])));
           MM_STOREU_Px(&Crow[SIMD_FACTOR*2], MM_FMADD(acc20, alpha_ps, MM_LOADU_Px(&Crow[SIMD_FACTOR*2])));
+          MM_STOREU_Px(&Crow[SIMD_FACTOR*3], MM_FMADD(acc30, alpha_ps, MM_LOADU_Px(&Crow[SIMD_FACTOR*3])));
+          MM_STOREU_Px(&Crow[SIMD_FACTOR*4], MM_FMADD(acc40, alpha_ps, MM_LOADU_Px(&Crow[SIMD_FACTOR*4])));
         } else if (pPrm->c_option == C_OPTION_REPLACE) {
           MM_STOREU_Px(&Crow[SIMD_FACTOR*0], MM_MUL_Px(acc00, alpha_ps));
           MM_STOREU_Px(&Crow[SIMD_FACTOR*1], MM_MUL_Px(acc10, alpha_ps));
           MM_STOREU_Px(&Crow[SIMD_FACTOR*2], MM_MUL_Px(acc20, alpha_ps));
+          MM_STOREU_Px(&Crow[SIMD_FACTOR*3], MM_MUL_Px(acc30, alpha_ps));
+          MM_STOREU_Px(&Crow[SIMD_FACTOR*4], MM_MUL_Px(acc40, alpha_ps));
         } else { // C_OPTION_MULTIPLY
           fp_vector_t beta_ps = MM_BROADCAST_Sx(&pPrm->beta);
           MM_STOREU_Px(&Crow[SIMD_FACTOR*0], MM_FMADD(acc00, alpha_ps, MM_MUL_Px(beta_ps, MM_LOADU_Px(&Crow[SIMD_FACTOR*0]))));
           MM_STOREU_Px(&Crow[SIMD_FACTOR*1], MM_FMADD(acc10, alpha_ps, MM_MUL_Px(beta_ps, MM_LOADU_Px(&Crow[SIMD_FACTOR*1]))));
           MM_STOREU_Px(&Crow[SIMD_FACTOR*2], MM_FMADD(acc20, alpha_ps, MM_MUL_Px(beta_ps, MM_LOADU_Px(&Crow[SIMD_FACTOR*2]))));
+          MM_STOREU_Px(&Crow[SIMD_FACTOR*3], MM_FMADD(acc30, alpha_ps, MM_MUL_Px(beta_ps, MM_LOADU_Px(&Crow[SIMD_FACTOR*3]))));
+          MM_STOREU_Px(&Crow[SIMD_FACTOR*4], MM_FMADD(acc40, alpha_ps, MM_MUL_Px(beta_ps, MM_LOADU_Px(&Crow[SIMD_FACTOR*4]))));
         }
       } else {
         int_vector_t mask = pPrm->mask_n;
         if (pPrm->c_option == C_OPTION_UPDATE) {
           MM_STOREU_Px    (&Crow[SIMD_FACTOR*0],       MM_FMADD(acc00, alpha_ps, MM_LOADU_Px    (&Crow[SIMD_FACTOR*0])));
           MM_STOREU_Px    (&Crow[SIMD_FACTOR*1],       MM_FMADD(acc10, alpha_ps, MM_LOADU_Px    (&Crow[SIMD_FACTOR*1])));
-          MM_MASKSTOREU_Px(&Crow[SIMD_FACTOR*2], mask, MM_FMADD(acc20, alpha_ps, MM_MASKLOADU_Px(&Crow[SIMD_FACTOR*2], mask)));
+          MM_STOREU_Px    (&Crow[SIMD_FACTOR*2],       MM_FMADD(acc20, alpha_ps, MM_LOADU_Px    (&Crow[SIMD_FACTOR*2])));
+          MM_STOREU_Px    (&Crow[SIMD_FACTOR*3],       MM_FMADD(acc30, alpha_ps, MM_LOADU_Px    (&Crow[SIMD_FACTOR*3])));
+          MM_MASKSTOREU_Px(&Crow[SIMD_FACTOR*4], mask, MM_FMADD(acc40, alpha_ps, MM_MASKLOADU_Px(&Crow[SIMD_FACTOR*4], mask)));
         } else if (pPrm->c_option == C_OPTION_REPLACE) {
           MM_STOREU_Px    (&Crow[SIMD_FACTOR*0],       MM_MUL_Px(acc00, alpha_ps));
           MM_STOREU_Px    (&Crow[SIMD_FACTOR*1],       MM_MUL_Px(acc10, alpha_ps));
-          MM_MASKSTOREU_Px(&Crow[SIMD_FACTOR*2], mask, MM_MUL_Px(acc20, alpha_ps));
+          MM_STOREU_Px    (&Crow[SIMD_FACTOR*2],       MM_MUL_Px(acc20, alpha_ps));
+          MM_STOREU_Px    (&Crow[SIMD_FACTOR*3],       MM_MUL_Px(acc30, alpha_ps));
+          MM_MASKSTOREU_Px(&Crow[SIMD_FACTOR*4], mask, MM_MUL_Px(acc40, alpha_ps));
         } else { // C_OPTION_MULTIPLY
           fp_vector_t beta_ps = MM_BROADCAST_Sx(&pPrm->beta);
           MM_STOREU_Px    (&Crow[SIMD_FACTOR*0],       MM_FMADD(acc00, alpha_ps, MM_MUL_Px(beta_ps, MM_LOADU_Px    (&Crow[SIMD_FACTOR*0]))));
           MM_STOREU_Px    (&Crow[SIMD_FACTOR*1],       MM_FMADD(acc10, alpha_ps, MM_MUL_Px(beta_ps, MM_LOADU_Px    (&Crow[SIMD_FACTOR*1]))));
-          MM_MASKSTOREU_Px(&Crow[SIMD_FACTOR*2], mask, MM_FMADD(acc20, alpha_ps, MM_MUL_Px(beta_ps, MM_MASKLOADU_Px(&Crow[SIMD_FACTOR*2], mask))));
+          MM_STOREU_Px    (&Crow[SIMD_FACTOR*2],       MM_FMADD(acc20, alpha_ps, MM_MUL_Px(beta_ps, MM_LOADU_Px    (&Crow[SIMD_FACTOR*2]))));
+          MM_STOREU_Px    (&Crow[SIMD_FACTOR*3],       MM_FMADD(acc30, alpha_ps, MM_MUL_Px(beta_ps, MM_LOADU_Px    (&Crow[SIMD_FACTOR*3]))));
+          MM_MASKSTOREU_Px(&Crow[SIMD_FACTOR*4], mask, MM_FMADD(acc40, alpha_ps, MM_MUL_Px(beta_ps, MM_MASKLOADU_Px(&Crow[SIMD_FACTOR*4], mask))));
         }
       }
     }
@@ -452,6 +472,7 @@ static void fma256_noncblas_sgemm_core_mn1(
  scalar_t*                   C,
  int                         nRows)    // 0 < nRows <= k_step
 {
+  const int A_WORDS_PER_ITER_MN1 = 4;
   int ldc = pPrm->ldc;
   int kFullSteps = (unsigned)(nRows) / 4;
   int kRemSteps  = (unsigned)(nRows) % 4;
@@ -461,7 +482,7 @@ static void fma256_noncblas_sgemm_core_mn1(
   int lda3 = lda2+lda1;
   int lda4 = lda3+lda1;
   const scalar_t* A = pPrm->A;
-  for (m = 0; m < pPrm->M - A_WORDS_PER_ITER + 1; A += lda4, m += A_WORDS_PER_ITER) {
+  for (m = 0; m < pPrm->M - A_WORDS_PER_ITER_MN1 + 1; A += lda4, m += A_WORDS_PER_ITER_MN1) {
     const fp_vector_t* Bcol = pPrm->bb;
     fp_vector_t acc00 = MM_SETZERO_Px();
     fp_vector_t acc10 = MM_SETZERO_Px();
@@ -473,7 +494,7 @@ static void fma256_noncblas_sgemm_core_mn1(
     fp_vector_t acc13 = MM_SETZERO_Px();
 
     scalar_t* CCol = C;
-    for (int ci = 0; ci < A_WORDS_PER_ITER; ++ci) {
+    for (int ci = 0; ci < A_WORDS_PER_ITER_MN1; ++ci) {
       _mm_prefetch((char*)(CCol), _MM_HINT_T0);
       CCol += ldc;
     }
@@ -950,6 +971,401 @@ static void fma256_noncblas_sgemm_core_mn2(
 }
 
 
+// minor core - inner loop processes 3 SIMD columns of B x 4 rows of A
+static void fma256_noncblas_sgemm_core_mn3(
+ const noncblas_sgemm_prm_t* pPrm,
+ scalar_t*                   C,
+ int                         nRows)    // 0 < nRows <= k_step
+{
+  const int A_WORDS_PER_ITER_MN3 = 4;
+  const int B_WORDS_PER_ITER_MN3 = 3;
+  int ldc = pPrm->ldc;
+  int m;
+  int lda1 = pPrm->lda;
+  int lda2 = lda1+lda1;
+  int lda3 = lda2+lda1;
+  int lda4 = lda3+lda1;
+  const scalar_t* A = pPrm->A;
+  for (m = pPrm->M - A_WORDS_PER_ITER_MN3 + 1; m > 0; A += lda4, m -= A_WORDS_PER_ITER_MN3) {
+    const fp_vector_t* Bcol = pPrm->bb;
+    scalar_t* CCol = C;
+    fp_vector_t acc00 = MM_SETZERO_Px();
+    fp_vector_t acc10 = MM_SETZERO_Px();
+    fp_vector_t acc20 = MM_SETZERO_Px();
+    _mm_prefetch((char*)(CCol), _MM_HINT_T0);
+    _mm_prefetch((char*)(CCol)+sizeof(fp_vector_t)/2*3, _MM_HINT_T0);
+    _mm_prefetch((char*)(CCol)+sizeof(fp_vector_t)*3-1, _MM_HINT_T0);CCol += ldc;
+    fp_vector_t acc01 = MM_SETZERO_Px();
+    fp_vector_t acc11 = MM_SETZERO_Px();
+    fp_vector_t acc21 = MM_SETZERO_Px();
+    _mm_prefetch((char*)(CCol), _MM_HINT_T0);
+    _mm_prefetch((char*)(CCol)+sizeof(fp_vector_t)/2*3, _MM_HINT_T0);
+    _mm_prefetch((char*)(CCol)+sizeof(fp_vector_t)*3-1, _MM_HINT_T0);CCol += ldc;
+    fp_vector_t acc02 = MM_SETZERO_Px();
+    fp_vector_t acc12 = MM_SETZERO_Px();
+    fp_vector_t acc22 = MM_SETZERO_Px();
+    _mm_prefetch((char*)(CCol), _MM_HINT_T0);
+    _mm_prefetch((char*)(CCol)+sizeof(fp_vector_t)/2*3, _MM_HINT_T0);
+    _mm_prefetch((char*)(CCol)+sizeof(fp_vector_t)*3-1, _MM_HINT_T0);CCol += ldc;
+    fp_vector_t acc03 = MM_SETZERO_Px();
+    fp_vector_t acc13 = MM_SETZERO_Px();
+    fp_vector_t acc23 = MM_SETZERO_Px();
+    _mm_prefetch((char*)(CCol), _MM_HINT_T0);
+    _mm_prefetch((char*)(CCol)+sizeof(fp_vector_t)/2*3, _MM_HINT_T0);
+    _mm_prefetch((char*)(CCol)+sizeof(fp_vector_t)*3-1, _MM_HINT_T0);CCol += ldc;
+
+    const scalar_t* ARow = A;
+    int k = nRows;
+    do {
+      fp_vector_t a;
+      fp_vector_t b0 = Bcol[0];
+      fp_vector_t b1 = Bcol[1];
+      fp_vector_t b2 = Bcol[2];
+      Bcol += B_WORDS_PER_ITER_MN3;
+
+      a = MM_BROADCAST_Sx(&ARow[0]);
+      acc00 = MM_FMADD(a, b0, acc00);
+      acc10 = MM_FMADD(a, b1, acc10);
+      acc20 = MM_FMADD(a, b2, acc20);
+
+      a = MM_BROADCAST_Sx(&ARow[lda1]);
+      acc01 = MM_FMADD(a, b0, acc01);
+      acc11 = MM_FMADD(a, b1, acc11);
+      acc21 = MM_FMADD(a, b2, acc21);
+
+      a = MM_BROADCAST_Sx(&ARow[lda2]);
+      acc02 = MM_FMADD(a, b0, acc02);
+      acc12 = MM_FMADD(a, b1, acc12);
+      acc22 = MM_FMADD(a, b2, acc22);
+
+      a = MM_BROADCAST_Sx(&ARow[lda3]);
+      acc03 = MM_FMADD(a, b0, acc03);
+      acc13 = MM_FMADD(a, b1, acc13);
+      acc23 = MM_FMADD(a, b2, acc23);
+
+      ARow += 1;
+    } while (--k);
+
+    fp_vector_t  alpha_ps = MM_BROADCAST_Sx(&pPrm->alpha);
+    int_vector_t mask = pPrm->mask_n;
+    if (pPrm->c_option == C_OPTION_UPDATE) {
+      #define UPDATE_CCOL(ccol, acc0, acc1, acc2) \
+      MM_STOREU_Px    (&((ccol)[SIMD_FACTOR*0]),       MM_FMADD((acc0), alpha_ps, MM_LOADU_Px    (&((ccol)[SIMD_FACTOR*0])))); \
+      MM_STOREU_Px    (&((ccol)[SIMD_FACTOR*1]),       MM_FMADD((acc1), alpha_ps, MM_LOADU_Px    (&((ccol)[SIMD_FACTOR*1])))); \
+      MM_MASKSTOREU_Px(&((ccol)[SIMD_FACTOR*2]), mask, MM_FMADD((acc2), alpha_ps, MM_MASKLOADU_Px(&((ccol)[SIMD_FACTOR*2]), mask)));
+
+      UPDATE_CCOL(C, acc00, acc10, acc20); C += ldc;
+      UPDATE_CCOL(C, acc01, acc11, acc21); C += ldc;
+      UPDATE_CCOL(C, acc02, acc12, acc22); C += ldc;
+      UPDATE_CCOL(C, acc03, acc13, acc23); C += ldc;
+
+      #undef UPDATE_CCOL
+    } else if (pPrm->c_option == C_OPTION_REPLACE) {
+      #define UPDATE_CCOL(ccol, acc0, acc1, acc2) \
+      MM_STOREU_Px    (&((ccol)[SIMD_FACTOR*0]),       MM_MUL_Px((acc0), alpha_ps)); \
+      MM_STOREU_Px    (&((ccol)[SIMD_FACTOR*1]),       MM_MUL_Px((acc1), alpha_ps)); \
+      MM_MASKSTOREU_Px(&((ccol)[SIMD_FACTOR*2]), mask, MM_MUL_Px((acc2), alpha_ps));
+
+      UPDATE_CCOL(C, acc00, acc10, acc20); C += ldc;
+      UPDATE_CCOL(C, acc01, acc11, acc21); C += ldc;
+      UPDATE_CCOL(C, acc02, acc12, acc22); C += ldc;
+      UPDATE_CCOL(C, acc03, acc13, acc23); C += ldc;
+
+      #undef UPDATE_CCOL
+    } else { // C_OPTION_MULTIPLY
+      fp_vector_t beta_ps = MM_BROADCAST_Sx(&pPrm->beta);
+      #define UPDATE_CCOL(ccol, acc0, acc1, acc2) \
+      MM_STOREU_Px    (&((ccol)[SIMD_FACTOR*0]),       MM_FMADD((acc0), alpha_ps, MM_MUL_Px(beta_ps, MM_LOADU_Px    (&((ccol)[SIMD_FACTOR*0]))))); \
+      MM_STOREU_Px    (&((ccol)[SIMD_FACTOR*1]),       MM_FMADD((acc1), alpha_ps, MM_MUL_Px(beta_ps, MM_LOADU_Px    (&((ccol)[SIMD_FACTOR*1]))))); \
+      MM_MASKSTOREU_Px(&((ccol)[SIMD_FACTOR*2]), mask, MM_FMADD((acc2), alpha_ps, MM_MUL_Px(beta_ps, MM_MASKLOADU_Px(&((ccol)[SIMD_FACTOR*2]), mask))));
+
+      UPDATE_CCOL(C, acc00, acc10, acc20); C += ldc;
+      UPDATE_CCOL(C, acc01, acc11, acc21); C += ldc;
+      UPDATE_CCOL(C, acc02, acc12, acc22); C += ldc;
+      UPDATE_CCOL(C, acc03, acc13, acc23); C += ldc;
+
+      #undef UPDATE_CCOL
+    }
+  }
+
+  // handle remaining rows of A
+  m += A_WORDS_PER_ITER_MN3 - 1;
+  int kFullSteps = (unsigned)(nRows) / 4;
+  int kRemSteps  = (unsigned)(nRows) % 4;
+  for (; m > 0; A += lda1, --m) {
+    const fp_vector_t* Bcol = pPrm->bb;
+    fp_vector_t acc00 = MM_SETZERO_Px();
+    fp_vector_t acc01 = MM_SETZERO_Px();
+    fp_vector_t acc02 = MM_SETZERO_Px();
+    fp_vector_t acc03 = MM_SETZERO_Px();
+
+    fp_vector_t acc10 = MM_SETZERO_Px();
+    fp_vector_t acc11 = MM_SETZERO_Px();
+    fp_vector_t acc12 = MM_SETZERO_Px();
+    fp_vector_t acc13 = MM_SETZERO_Px();
+
+    fp_vector_t acc20 = MM_SETZERO_Px();
+    fp_vector_t acc21 = MM_SETZERO_Px();
+    fp_vector_t acc22 = MM_SETZERO_Px();
+    fp_vector_t acc23 = MM_SETZERO_Px();
+
+    _mm_prefetch((char*)(C),                         _MM_HINT_T0);
+    _mm_prefetch((char*)(C)+sizeof(fp_vector_t)/2*3, _MM_HINT_T0);
+    _mm_prefetch((char*)(C)+sizeof(fp_vector_t)*3-1, _MM_HINT_T0);
+    const scalar_t* ARow = A;
+    for (int k = 0; k < kFullSteps; ++k) {
+      fp_vector_t a;
+
+      a = MM_BROADCAST_Sx(&ARow[0]);
+      acc00 = MM_FMADD(a, Bcol[0], acc00);
+      acc10 = MM_FMADD(a, Bcol[1], acc10);
+      acc20 = MM_FMADD(a, Bcol[2], acc20);
+      Bcol += B_WORDS_PER_ITER_MN3;
+
+      a = MM_BROADCAST_Sx(&ARow[1]);
+      acc01 = MM_FMADD(a, Bcol[0], acc01);
+      acc11 = MM_FMADD(a, Bcol[1], acc11);
+      acc21 = MM_FMADD(a, Bcol[2], acc21);
+      Bcol += B_WORDS_PER_ITER_MN3;
+
+      a = MM_BROADCAST_Sx(&ARow[2]);
+      acc02 = MM_FMADD(a, Bcol[0], acc02);
+      acc12 = MM_FMADD(a, Bcol[1], acc12);
+      acc22 = MM_FMADD(a, Bcol[2], acc22);
+      Bcol += B_WORDS_PER_ITER_MN3;
+
+      a = MM_BROADCAST_Sx(&ARow[3]);
+      acc03 = MM_FMADD(a, Bcol[0], acc03);
+      acc13 = MM_FMADD(a, Bcol[1], acc13);
+      acc23 = MM_FMADD(a, Bcol[2], acc23);
+      Bcol += B_WORDS_PER_ITER_MN3;
+
+      ARow += 4;
+    }
+    if (kRemSteps != 0) {
+      fp_vector_t a;
+      a = MM_BROADCAST_Sx(&ARow[0]);
+      acc00 = MM_FMADD(a, Bcol[0], acc00);
+      acc10 = MM_FMADD(a, Bcol[1], acc10);
+      acc20 = MM_FMADD(a, Bcol[2], acc20);
+      if (kRemSteps != 1) {
+        Bcol += 3;
+        a = MM_BROADCAST_Sx(&ARow[1]);
+        acc01 = MM_FMADD(a, Bcol[0], acc01);
+        acc11 = MM_FMADD(a, Bcol[1], acc11);
+        acc21 = MM_FMADD(a, Bcol[2], acc21);
+        if (kRemSteps != 2) {
+          Bcol += 3;
+          a = MM_BROADCAST_Sx(&ARow[2]);
+          acc02 = MM_FMADD(a, Bcol[0], acc02);
+          acc12 = MM_FMADD(a, Bcol[1], acc12);
+          acc22 = MM_FMADD(a, Bcol[2], acc22);
+        }
+      }
+    }
+    acc00 = MM_ADD_Px(acc00, acc01);
+    acc02 = MM_ADD_Px(acc02, acc03);
+    acc10 = MM_ADD_Px(acc10, acc11);
+    acc12 = MM_ADD_Px(acc12, acc13);
+    acc20 = MM_ADD_Px(acc20, acc21);
+    acc22 = MM_ADD_Px(acc22, acc23);
+
+    acc00 = MM_ADD_Px(acc00, acc02);
+    acc10 = MM_ADD_Px(acc10, acc12);
+    acc20 = MM_ADD_Px(acc20, acc22);
+
+    fp_vector_t alpha_ps = MM_BROADCAST_Sx(&pPrm->alpha);
+    int_vector_t mask = pPrm->mask_n;
+    if (pPrm->c_option == C_OPTION_UPDATE) {
+      MM_STOREU_Px    (&C[SIMD_FACTOR*0],       MM_FMADD(acc00, alpha_ps, MM_LOADU_Px    (&C[SIMD_FACTOR*0])));
+      MM_STOREU_Px    (&C[SIMD_FACTOR*1],       MM_FMADD(acc10, alpha_ps, MM_LOADU_Px    (&C[SIMD_FACTOR*1])));
+      MM_MASKSTOREU_Px(&C[SIMD_FACTOR*2], mask, MM_FMADD(acc20, alpha_ps, MM_MASKLOADU_Px(&C[SIMD_FACTOR*2], mask)));
+    } else if (pPrm->c_option == C_OPTION_REPLACE) {
+      MM_STOREU_Px    (&C[SIMD_FACTOR*0],       MM_MUL_Px(acc00, alpha_ps));
+      MM_STOREU_Px    (&C[SIMD_FACTOR*1],       MM_MUL_Px(acc10, alpha_ps));
+      MM_MASKSTOREU_Px(&C[SIMD_FACTOR*2], mask, MM_MUL_Px(acc20, alpha_ps));
+    } else { // C_OPTION_MULTIPLY
+      fp_vector_t beta_ps = MM_BROADCAST_Sx(&pPrm->beta);
+      MM_STOREU_Px    (&C[SIMD_FACTOR*0],       MM_FMADD(acc00, alpha_ps, MM_MUL_Px(beta_ps, MM_LOADU_Px    (&C[SIMD_FACTOR*0]))));
+      MM_STOREU_Px    (&C[SIMD_FACTOR*1],       MM_FMADD(acc10, alpha_ps, MM_MUL_Px(beta_ps, MM_LOADU_Px    (&C[SIMD_FACTOR*1]))));
+      MM_MASKSTOREU_Px(&C[SIMD_FACTOR*2], mask, MM_FMADD(acc20, alpha_ps, MM_MUL_Px(beta_ps, MM_MASKLOADU_Px(&C[SIMD_FACTOR*2], mask))));
+    }
+    C += ldc;
+  }
+}
+
+// minor core - inner loop processes 4 SIMD columns of B x 2 rows of A
+static void fma256_noncblas_sgemm_core_mn4(
+ const noncblas_sgemm_prm_t* pPrm,
+ scalar_t*                   C,
+ int                         nRows)    // 0 < nRows <= k_step
+{
+  const int A_WORDS_PER_ITER_MN4 = 2;
+  const int B_WORDS_PER_ITER_MN4 = 4;
+  int ldc = pPrm->ldc;
+  int m;
+  int lda1 = pPrm->lda;
+  int lda2 = lda1+lda1;
+  const scalar_t* A = pPrm->A;
+  for (m = pPrm->M - A_WORDS_PER_ITER_MN4 + 1; m > 0; A += lda2, m -= A_WORDS_PER_ITER_MN4) {
+    const fp_vector_t* Bcol = pPrm->bb;
+    scalar_t* CCol = C;
+    fp_vector_t acc00 = MM_SETZERO_Px();
+    fp_vector_t acc10 = MM_SETZERO_Px();
+    fp_vector_t acc20 = MM_SETZERO_Px();
+    fp_vector_t acc30 = MM_SETZERO_Px();
+    _mm_prefetch((char*)(CCol), _MM_HINT_T0);
+    _mm_prefetch((char*)(CCol)+sizeof(fp_vector_t)*4/2, _MM_HINT_T0);
+    _mm_prefetch((char*)(CCol)+sizeof(fp_vector_t)*4-1, _MM_HINT_T0);CCol += ldc;
+    fp_vector_t acc01 = MM_SETZERO_Px();
+    fp_vector_t acc11 = MM_SETZERO_Px();
+    fp_vector_t acc21 = MM_SETZERO_Px();
+    fp_vector_t acc31 = MM_SETZERO_Px();
+    _mm_prefetch((char*)(CCol), _MM_HINT_T0);
+    _mm_prefetch((char*)(CCol)+sizeof(fp_vector_t)*4/2, _MM_HINT_T0);
+    _mm_prefetch((char*)(CCol)+sizeof(fp_vector_t)*4-1, _MM_HINT_T0);CCol += ldc;
+
+    const scalar_t* ARow = A;
+    int k = nRows;
+    do {
+      fp_vector_t a;
+      fp_vector_t b0 = Bcol[0];
+      fp_vector_t b1 = Bcol[1];
+      fp_vector_t b2 = Bcol[2];
+      fp_vector_t b3 = Bcol[3];
+      Bcol += B_WORDS_PER_ITER_MN4;
+
+      a = MM_BROADCAST_Sx(&ARow[0]);
+      acc00 = MM_FMADD(a, b0, acc00);
+      acc10 = MM_FMADD(a, b1, acc10);
+      acc20 = MM_FMADD(a, b2, acc20);
+      acc30 = MM_FMADD(a, b3, acc30);
+
+      a = MM_BROADCAST_Sx(&ARow[lda1]);
+      acc01 = MM_FMADD(a, b0, acc01);
+      acc11 = MM_FMADD(a, b1, acc11);
+      acc21 = MM_FMADD(a, b2, acc21);
+      acc31 = MM_FMADD(a, b3, acc31);
+
+      ARow += 1;
+    } while (--k);
+
+    fp_vector_t  alpha_ps = MM_BROADCAST_Sx(&pPrm->alpha);
+    int_vector_t mask = pPrm->mask_n;
+    if (pPrm->c_option == C_OPTION_UPDATE) {
+      #define UPDATE_CCOL(ccol, acc0, acc1, acc2, acc3) \
+      MM_STOREU_Px    (&((ccol)[SIMD_FACTOR*0]),       MM_FMADD((acc0), alpha_ps, MM_LOADU_Px    (&((ccol)[SIMD_FACTOR*0])))); \
+      MM_STOREU_Px    (&((ccol)[SIMD_FACTOR*1]),       MM_FMADD((acc1), alpha_ps, MM_LOADU_Px    (&((ccol)[SIMD_FACTOR*1])))); \
+      MM_STOREU_Px    (&((ccol)[SIMD_FACTOR*2]),       MM_FMADD((acc2), alpha_ps, MM_LOADU_Px    (&((ccol)[SIMD_FACTOR*2])))); \
+      MM_MASKSTOREU_Px(&((ccol)[SIMD_FACTOR*3]), mask, MM_FMADD((acc3), alpha_ps, MM_MASKLOADU_Px(&((ccol)[SIMD_FACTOR*3]), mask)));
+
+      UPDATE_CCOL(C, acc00, acc10, acc20, acc30); C += ldc;
+      UPDATE_CCOL(C, acc01, acc11, acc21, acc31); C += ldc;
+
+      #undef UPDATE_CCOL
+    } else if (pPrm->c_option == C_OPTION_REPLACE) {
+      #define UPDATE_CCOL(ccol, acc0, acc1, acc2, acc3) \
+      MM_STOREU_Px    (&((ccol)[SIMD_FACTOR*0]),       MM_MUL_Px((acc0), alpha_ps)); \
+      MM_STOREU_Px    (&((ccol)[SIMD_FACTOR*1]),       MM_MUL_Px((acc1), alpha_ps)); \
+      MM_STOREU_Px    (&((ccol)[SIMD_FACTOR*2]),       MM_MUL_Px((acc2), alpha_ps)); \
+      MM_MASKSTOREU_Px(&((ccol)[SIMD_FACTOR*3]), mask, MM_MUL_Px((acc3), alpha_ps));
+
+      UPDATE_CCOL(C, acc00, acc10, acc20, acc30); C += ldc;
+      UPDATE_CCOL(C, acc01, acc11, acc21, acc31); C += ldc;
+
+      #undef UPDATE_CCOL
+    } else { // C_OPTION_MULTIPLY
+      fp_vector_t beta_ps = MM_BROADCAST_Sx(&pPrm->beta);
+      #define UPDATE_CCOL(ccol, acc0, acc1, acc2, acc3) \
+      MM_STOREU_Px    (&((ccol)[SIMD_FACTOR*0]),       MM_FMADD((acc0), alpha_ps, MM_MUL_Px(beta_ps, MM_LOADU_Px    (&((ccol)[SIMD_FACTOR*0]))))); \
+      MM_STOREU_Px    (&((ccol)[SIMD_FACTOR*1]),       MM_FMADD((acc1), alpha_ps, MM_MUL_Px(beta_ps, MM_LOADU_Px    (&((ccol)[SIMD_FACTOR*1]))))); \
+      MM_STOREU_Px    (&((ccol)[SIMD_FACTOR*2]),       MM_FMADD((acc2), alpha_ps, MM_MUL_Px(beta_ps, MM_LOADU_Px    (&((ccol)[SIMD_FACTOR*2]))))); \
+      MM_MASKSTOREU_Px(&((ccol)[SIMD_FACTOR*3]), mask, MM_FMADD((acc3), alpha_ps, MM_MUL_Px(beta_ps, MM_MASKLOADU_Px(&((ccol)[SIMD_FACTOR*3]), mask))));
+
+      UPDATE_CCOL(C, acc00, acc10, acc20, acc30); C += ldc;
+      UPDATE_CCOL(C, acc01, acc11, acc21, acc31); C += ldc;
+
+      #undef UPDATE_CCOL
+    }
+  }
+
+  // handle remaining row of A
+  m += A_WORDS_PER_ITER_MN4 - 1;
+  if (m != 0) {
+    int kFullSteps = (unsigned)(nRows) / 2;
+    int kRemSteps  = (unsigned)(nRows) % 2;
+    const fp_vector_t* Bcol = pPrm->bb;
+    fp_vector_t acc00 = MM_SETZERO_Px();
+    fp_vector_t acc01 = MM_SETZERO_Px();
+
+    fp_vector_t acc10 = MM_SETZERO_Px();
+    fp_vector_t acc11 = MM_SETZERO_Px();
+
+    fp_vector_t acc20 = MM_SETZERO_Px();
+    fp_vector_t acc21 = MM_SETZERO_Px();
+
+    fp_vector_t acc30 = MM_SETZERO_Px();
+    fp_vector_t acc31 = MM_SETZERO_Px();
+
+    _mm_prefetch((char*)(C),                         _MM_HINT_T0);
+    _mm_prefetch((char*)(C)+sizeof(fp_vector_t)/2*4, _MM_HINT_T0);
+    _mm_prefetch((char*)(C)+sizeof(fp_vector_t)*4-1, _MM_HINT_T0);
+    const scalar_t* ARow = A;
+    for (int k = 0; k < kFullSteps; ++k) {
+      fp_vector_t a;
+
+      a = MM_BROADCAST_Sx(&ARow[0]);
+      acc00 = MM_FMADD(a, Bcol[0], acc00);
+      acc10 = MM_FMADD(a, Bcol[1], acc10);
+      acc20 = MM_FMADD(a, Bcol[2], acc20);
+      acc30 = MM_FMADD(a, Bcol[3], acc30);
+      Bcol += B_WORDS_PER_ITER_MN4;
+
+      a = MM_BROADCAST_Sx(&ARow[1]);
+      acc01 = MM_FMADD(a, Bcol[0], acc01);
+      acc11 = MM_FMADD(a, Bcol[1], acc11);
+      acc21 = MM_FMADD(a, Bcol[2], acc21);
+      acc31 = MM_FMADD(a, Bcol[3], acc31);
+      Bcol += B_WORDS_PER_ITER_MN4;
+
+      ARow += 2;
+    }
+    if (kRemSteps != 0) {
+      fp_vector_t a;
+      a = MM_BROADCAST_Sx(&ARow[0]);
+      acc00 = MM_FMADD(a, Bcol[0], acc00);
+      acc10 = MM_FMADD(a, Bcol[1], acc10);
+      acc20 = MM_FMADD(a, Bcol[2], acc20);
+      acc30 = MM_FMADD(a, Bcol[3], acc30);
+    }
+    acc00 = MM_ADD_Px(acc00, acc01);
+    acc10 = MM_ADD_Px(acc10, acc11);
+    acc20 = MM_ADD_Px(acc20, acc21);
+    acc30 = MM_ADD_Px(acc30, acc31);
+
+    fp_vector_t alpha_ps = MM_BROADCAST_Sx(&pPrm->alpha);
+    int_vector_t mask = pPrm->mask_n;
+    if (pPrm->c_option == C_OPTION_UPDATE) {
+      MM_STOREU_Px    (&C[SIMD_FACTOR*0],       MM_FMADD(acc00, alpha_ps, MM_LOADU_Px    (&C[SIMD_FACTOR*0])));
+      MM_STOREU_Px    (&C[SIMD_FACTOR*1],       MM_FMADD(acc10, alpha_ps, MM_LOADU_Px    (&C[SIMD_FACTOR*1])));
+      MM_STOREU_Px    (&C[SIMD_FACTOR*2],       MM_FMADD(acc20, alpha_ps, MM_LOADU_Px    (&C[SIMD_FACTOR*2])));
+      MM_MASKSTOREU_Px(&C[SIMD_FACTOR*3], mask, MM_FMADD(acc30, alpha_ps, MM_MASKLOADU_Px(&C[SIMD_FACTOR*3], mask)));
+    } else if (pPrm->c_option == C_OPTION_REPLACE) {
+      MM_STOREU_Px    (&C[SIMD_FACTOR*0],       MM_MUL_Px(acc00, alpha_ps));
+      MM_STOREU_Px    (&C[SIMD_FACTOR*1],       MM_MUL_Px(acc10, alpha_ps));
+      MM_STOREU_Px    (&C[SIMD_FACTOR*2],       MM_MUL_Px(acc20, alpha_ps));
+      MM_MASKSTOREU_Px(&C[SIMD_FACTOR*3], mask, MM_MUL_Px(acc30, alpha_ps));
+    } else { // C_OPTION_MULTIPLY
+      fp_vector_t beta_ps = MM_BROADCAST_Sx(&pPrm->beta);
+      MM_STOREU_Px    (&C[SIMD_FACTOR*0],       MM_FMADD(acc00, alpha_ps, MM_MUL_Px(beta_ps, MM_LOADU_Px    (&C[SIMD_FACTOR*0]))));
+      MM_STOREU_Px    (&C[SIMD_FACTOR*1],       MM_FMADD(acc10, alpha_ps, MM_MUL_Px(beta_ps, MM_LOADU_Px    (&C[SIMD_FACTOR*1]))));
+      MM_STOREU_Px    (&C[SIMD_FACTOR*2],       MM_FMADD(acc20, alpha_ps, MM_MUL_Px(beta_ps, MM_LOADU_Px    (&C[SIMD_FACTOR*2]))));
+      MM_MASKSTOREU_Px(&C[SIMD_FACTOR*3], mask, MM_FMADD(acc30, alpha_ps, MM_MUL_Px(beta_ps, MM_MASKLOADU_Px(&C[SIMD_FACTOR*3], mask))));
+    }
+    C += ldc;
+  }
+}
+
 static void CopyAndTransposeMj(
   noncblas_sgemm_prm_t* pPrm,
   const scalar_t*       B, int ldb,
@@ -1029,6 +1445,35 @@ static void CopyAndTransposeMn2WithMask(
   }
 }
 
+static void CopyAndTransposeMn3WithMask(
+  noncblas_sgemm_prm_t* pPrm,
+  const scalar_t *B, int ldb,
+  int nRows)
+{
+  int_vector_t mask = pPrm->mask_n;
+  fp_vector_t* dst = pPrm->bb;
+  for (int r = 0; r < nRows; B += ldb, dst += 3, ++r) {
+    dst[0] = MM_LOADU_Px    (&B[SIMD_FACTOR*0]);
+    dst[1] = MM_LOADU_Px    (&B[SIMD_FACTOR*1]);
+    dst[2] = MM_MASKLOADU_Px(&B[SIMD_FACTOR*2], mask);
+  }
+}
+
+static void CopyAndTransposeMn4WithMask(
+  noncblas_sgemm_prm_t* pPrm,
+  const scalar_t *B, int ldb,
+  int nRows)
+{
+  int_vector_t mask = pPrm->mask_n;
+  fp_vector_t* dst = pPrm->bb;
+  for (int r = 0; r < nRows; B += ldb, dst += 4, ++r) {
+    dst[0] = MM_LOADU_Px    (&B[SIMD_FACTOR*0]);
+    dst[1] = MM_LOADU_Px    (&B[SIMD_FACTOR*1]);
+    dst[2] = MM_LOADU_Px    (&B[SIMD_FACTOR*2]);
+    dst[3] = MM_MASKLOADU_Px(&B[SIMD_FACTOR*3], mask);
+  }
+}
+
 
 static int st_m_step = 0;
 static int st_k_step = 0;
@@ -1053,7 +1498,7 @@ static void noncblas_sgemm_wide_n(
   int nwRemMn = nwRem - nwRemMj*B_WORDS_PER_ITER;
   int nMj = nwMj * SIMD_FACTOR;
 
-  const int K_STEP_NOM = ((unsigned)K_STEP/3)*3 + 1;
+  const int K_STEP_NOM = ((unsigned)K_STEP/4)*4 + 1;
   const int K_STEP_MAX = ((unsigned)K_STEP_NOM/2)*3;
   int k_step = K > K_STEP_MAX ? K_STEP_NOM : K;
 
@@ -1088,9 +1533,14 @@ static void noncblas_sgemm_wide_n(
     memset((char*)&prm.mask_n, -1, sizeof(*C)*nRem);
     if (nwRemMn == 0)
       nwRemMj_masked_b_it =  nwRemMj - 1;
+  } else {
+    if (nwRemMj == N_STEP_MULTIPLIER) {
+      nwRemMj = 0;
+      nMj += n_step;
+    }
   }
 
-  //printf("nMj=%d, nwRemMn=%d, nwRemMj=%d remW_n=%d n_step=%d\n", nMj, nwRemMn, nwRemMj, remW_n, n_step);
+  // printf("nMj=%d, nwRemMn=%d, nwRemMj=%d nRem=%d n_step=%d\n", nMj, nwRemMn, nwRemMj, nRem, n_step);
   uint64_t tt = 0;
 
   for (int k = 0; k < K; k += k_step) {
@@ -1100,7 +1550,7 @@ static void noncblas_sgemm_wide_n(
     int delta_k = K - k;
     if (delta_k > k_step) {
       if (delta_k < K_STEP_MAX)
-        k_step = ((unsigned)(delta_k-1)/6 + 1)*3 + 1;
+        k_step = ((unsigned)(delta_k-1)/8 + 1)*4 + 1;
       delta_k = k_step;
     }
 
@@ -1141,9 +1591,15 @@ static void noncblas_sgemm_wide_n(
         if (nwRemMn == 1) {
           CopyAndTransposeMn1WithMask(&prm, &B[k*ldb + n], ldb, delta_k);
           fma256_noncblas_sgemm_core_mn1(&prm, &Crow[n], delta_k);
-        } else {
+        } else if (nwRemMn == 2) {
           CopyAndTransposeMn2WithMask(&prm, &B[k*ldb + n], ldb, delta_k);
           fma256_noncblas_sgemm_core_mn2(&prm, &Crow[n], delta_k);
+        } else if (nwRemMn == 3) {
+          CopyAndTransposeMn3WithMask(&prm, &B[k*ldb + n], ldb, delta_k);
+          fma256_noncblas_sgemm_core_mn3(&prm, &Crow[n], delta_k);
+        } else {
+          CopyAndTransposeMn4WithMask(&prm, &B[k*ldb + n], ldb, delta_k);
+          fma256_noncblas_sgemm_core_mn4(&prm, &Crow[n], delta_k);
         }
       }
     }

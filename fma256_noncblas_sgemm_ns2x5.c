@@ -32,4 +32,4 @@ enum {
  M_STEP            = 260,
 };
 
-#include "avxnnn_noncblas_sgemm_ns2x5_unroll2.c"
+#include "avxnnn_noncblas_sgemm_ns2x5_unroll4.c"
