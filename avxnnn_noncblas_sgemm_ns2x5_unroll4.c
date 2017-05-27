@@ -185,7 +185,7 @@ static void fma256_noncblas_sgemm_core_mj(
 
         Bcol += B_WORDS_PER_ITER;
 
-        ARow += 2;
+        ARow += 4;
       } while (--k);
 
       if (kRemSteps != 0) {
