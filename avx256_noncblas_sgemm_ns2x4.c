@@ -28,7 +28,7 @@ typedef __m128i int_vector4_t;
 enum {
  N_STEP_MULTIPLIER = 3,
  MxN_BLOCK_SZ      = 1600000,
- K_STEP            = 128,
+ K_STEP            = 75,
  M_STEP            = 200,
 };
 
