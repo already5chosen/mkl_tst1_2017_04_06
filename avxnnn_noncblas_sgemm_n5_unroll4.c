@@ -753,8 +753,15 @@ static void noncblas_sgemm_wide_n(
         k_step = SMALL_M_NxK_STEP/div;
     }
   }
-  int k_Nsteps = (K*4-k_step)/(4*k_step) + 1;
-  k_step = k_Nsteps < 2 ? K : ((K-1)/(k_Nsteps*4) + 1) * 4 + 1;
+  if (k_step < K) {
+    k_step = ((unsigned)(k_step-1)/4)*4 + 1;
+    int k_Nsteps = (unsigned)(K-1)/k_step + 1;
+    // (kk*4+1)*k_Nsteps >= K
+    k_step = (K-k_Nsteps-1)/(k_Nsteps*4) * 4 + 5;
+  } else {
+    k_step = K;
+  }
+  const int K_STEP_MAX = (k_step/2)*3;
 #endif
 
   int m_step = st_m_step;
@@ -801,16 +808,12 @@ static void noncblas_sgemm_wide_n(
     prm.c_option = C_OPTION_UPDATE;
     if (k==0 && prm.beta != 1.0f)
       prm.c_option = (prm.beta == 0) ? C_OPTION_REPLACE : C_OPTION_MULTIPLY;
-#ifdef USE_CONSTANT_K_STEP
     int delta_k = K - k;
     if (delta_k > k_step) {
       if (delta_k < K_STEP_MAX)
-        k_step = ((unsigned)(delta_k-1)/8 + 1)*4;
+        k_step = ((unsigned)(delta_k-1)/8 + 1)*4 + 1;
       delta_k = k_step;
     }
-#else
-    int delta_k = k_step < K - k ? k_step : K - k;
-#endif
     for (int m = 0; m < M; m += prm.M) {
       prm.M = m_step < M - m ? m_step : M - m;
 
