@@ -99,9 +99,9 @@ OBJLIST :=
 OBJLIST += tst2.o
 
 OBJLIST_AVX :=
-OBJLIST_AVX += avx256_noncblas_sgemm_ns2x4.o
 
 OBJLIST_FMA :=
+OBJLIST_FMA += fma256_noncblas_sgemm_n5.o
 
 
 -include $(OBJLIST:.o=.d)

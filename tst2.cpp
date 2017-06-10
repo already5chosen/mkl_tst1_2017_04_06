@@ -17,7 +17,7 @@
 #include <cpuid.h>
 #endif
 
-extern "C" void avx256_noncblas_sgemm_ns2x4(
+extern "C" void fma256_noncblas_sgemm_n5(
  int M, int N, int K,
  float alpha,
  const float *A, int lda,
@@ -149,30 +149,48 @@ int main(int argz, char** argv)
   for (int m = M0; m <= M1; m += deltaM) {
     for (int n = N0; n <= N1; n += deltaN) {
       for (int k = K0; k <= K1; k += deltaK) {
-        ::Sleep(10);
         int a_sz = ((m*k*sizeof(float)-1)/64 + 1)*(64/sizeof(float));
         int b_sz = ((k*n*sizeof(float)-1)/64 + 1)*(64/sizeof(float));
         int c_sz = ((m*n*sizeof(float)-1)/64 + 1)*(64/sizeof(float));
         int nIt = std::min(AB_SZxN/(a_sz+b_sz), C_SZxN/c_sz);
-        memcpy(C, srcC, c_sz*nIt*sizeof(float));
+        nIt = (nIt - 1) | 1;  // keep nIt odd
         std::vector<uint64_t> dt(nIt);
-        float* A = AB;
-        float* B = &AB[a_sz*nIt];
-        for (int it = 0; it < nIt; ++it) {
-          uint64_t t0 = __rdtsc();
-          avx256_noncblas_sgemm_ns2x4(
-            m, n, k, alpha,
-            &A[a_sz*it], k,
-            &B[b_sz*it], n,
-            beta,
-            &C[c_sz*it], n);
-          uint64_t t1 = __rdtsc();
-          dt[it] = t1 - t0;
+        const int N_REP = 7;
+        uint64_t dtMedArr[N_REP];
+        bool done = false;
+        for (int rep = 0; rep < N_REP; ++rep) {
+          ::Sleep(10);
+          memcpy(C, srcC, c_sz*nIt*sizeof(float));
+          float* A = AB;
+          float* B = &AB[a_sz*nIt];
+          for (int it = 0; it < nIt; ++it) {
+            uint64_t t0 = __rdtsc();
+            fma256_noncblas_sgemm_n5(
+              m, n, k, alpha,
+              &A[a_sz*it], k,
+              &B[b_sz*it], n,
+              beta,
+              &C[c_sz*it], n);
+            uint64_t t1 = __rdtsc();
+            dt[it] = t1 - t0;
+          }
+          for (int i = 0; i < c_sz*nIt; ++i)
+            dummy += C[i];
+          std::nth_element(dt.begin(), dt.begin()+nIt/2, dt.begin()+nIt);
+          uint64_t dtMed = dt[nIt/2];
+          dtMedArr[rep] = dtMed;
+          std::nth_element(dt.begin(), dt.begin()+1, dt.begin()+nIt);
+          uint64_t dt1 = dt[1];
+          if (double(dtMed) < double(dt1)*1.025) {
+            dtMedArr[N_REP/2] = dtMed;
+            done = true;
+            break;
+          }
         }
-        for (int i = 0; i < c_sz*nIt; ++i)
-          dummy += C[i];
-        std::nth_element(dt.begin(), dt.begin()+nIt/2, dt.begin()+nIt);
-        printf("%4d %4d %4d %.0f\n", m, n, k, double(dt[nIt/2]));
+        if (!done) {
+          std::nth_element(dtMedArr, dtMedArr+N_REP/2, dtMedArr+N_REP);
+        }
+        printf("%4d %4d %4d %.0f\n", m, n, k, double(dtMedArr[N_REP/2]));
         fflush(stdout);
       }
     }
