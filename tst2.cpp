@@ -17,13 +17,53 @@
 #include <cpuid.h>
 #endif
 
-extern "C" void fma256_noncblas_sgemm_n5(
+extern "C" {
+
+void fma256_noncblas_sgemm_n5(
  int M, int N, int K,
  float alpha,
  const float *A, int lda,
  const float *B, int ldb,
  float beta,
  float *C, int ldc);
+
+void fma256_noncblas_sgemm_ns5(
+ int M, int N, int K,
+ float alpha,
+ const float *A, int lda,
+ const float *B, int ldb,
+ float beta,
+ float *C, int ldc);
+
+void fma256_noncblas_sgemm_ns2x5(
+ int M, int N, int K,
+ float alpha,
+ const float *A, int lda,
+ const float *B, int ldb,
+ float beta,
+ float *C, int ldc);
+
+}
+
+typedef void (*noncblas_sgemm_func_t)(
+  int M, int N, int K,
+  float alpha,
+  const float *A, int lda,
+  const float *B, int ldb,
+  float beta,
+  float *C, int ldc);
+
+struct func_tab_entry_t {
+  const char*           name;
+  noncblas_sgemm_func_t func;
+};
+
+static func_tab_entry_t funcTab[] = {
+  { "5x2",  fma256_noncblas_sgemm_n5 },
+  { "s5x2", fma256_noncblas_sgemm_ns5 },
+  { "s2x5", fma256_noncblas_sgemm_ns2x5 },
+  {0},
+};
 
 
 #ifdef _MSC_VER
@@ -32,6 +72,7 @@ extern "C" void fma256_noncblas_sgemm_n5(
 
 int main(int argz, char** argv)
 {
+  int uut_i = 0;
   int M0 = 100,  M1 = 100;
   int N0 = 300,  N1 = 300;
   int K0 = 1000, K1 = 1000;
@@ -46,7 +87,7 @@ int main(int argz, char** argv)
   for (int arg_i = 1; arg_i < argz; ++arg_i) {
     char* arg = argv[arg_i];
     static const char* prefTab[] = {
-      "alpha", "beta", "M", "N", "K"
+      "alpha", "beta", "M", "N", "K", "F"
     };
     const int prefTabLen = sizeof(prefTab)/sizeof(prefTab[0]);
     for (int pref_i = 0; pref_i < prefTabLen; ++pref_i) {
@@ -65,6 +106,13 @@ int main(int argz, char** argv)
             case 0: alpha = float(val); break;
             case 1: beta  = float(val); break;
             default:break;
+          }
+        } else if (pref_i == 5) {
+          for (int i = 0; funcTab[i].name != 0; ++i) {
+            if (strcasecmp(funcTab[i].name, &arg[preflen+1])==0) {
+              uut_i = i;
+              break;
+            }
           }
         } else {
           // range arguments
@@ -116,9 +164,10 @@ int main(int argz, char** argv)
     }
     next_arg:;
   }
+  noncblas_sgemm_func_t uut = funcTab[uut_i].func;
 
-  printf("# Running SGEMM with M=%d:%d:%d, N=%d:%d:%d, K=%d:%d:%d, alpha=%f, beta=%f\n",
-    M0, deltaM, M1, N0, deltaN, N1, K0, deltaK, K1, alpha, beta);
+  printf("# Running SGEMM %s with M=%d:%d:%d, N=%d:%d:%d, K=%d:%d:%d, alpha=%f, beta=%f\n",
+    funcTab[uut_i].name, M0, deltaM, M1, N0, deltaN, N1, K0, deltaK, K1, alpha, beta);
 
   int sz = (M1*N1 + M1*K1 + N1*K1)*sizeof(float);
   int nIter = std::max(MIN_WORKING_SET_SZ/sz, NITER_MIN);
@@ -165,7 +214,7 @@ int main(int argz, char** argv)
           float* B = &AB[a_sz*nIt];
           for (int it = 0; it < nIt; ++it) {
             uint64_t t0 = __rdtsc();
-            fma256_noncblas_sgemm_n5(
+            uut(
               m, n, k, alpha,
               &A[a_sz*it], k,
               &B[b_sz*it], n,

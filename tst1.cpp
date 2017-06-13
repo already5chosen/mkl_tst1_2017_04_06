@@ -769,7 +769,7 @@ int main(int argz, char** argv)
   }
 #endif
 
-#if 0
+#if 1
   if (hasFma3) {
     printf("Testing my 256-bit FMA hack (2x5 inner loop with 1x5 helper, no copy of A)...\n");
     ::Sleep(100);
