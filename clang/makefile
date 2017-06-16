@@ -73,17 +73,20 @@ OBJLIST_FMA += fma256_noncblas_sgemm_5x2.o
 OBJLIST_FMA += fma128_noncblas_sgemm_m.o
 OBJLIST_FMA += fma256_noncblas_sgemm_m.o
 OBJLIST_FMA += fma256_noncblas_sgemm_n5.o
+OBJLIST_FMA += fma256_noncblas_sgemm_nn5x2.o
 OBJLIST_FMA += fma256_noncblas_sgemm_nt5.o
 OBJLIST_FMA += fma128_noncblas_sgemm_n5.o
 OBJLIST_FMA += fma256_noncblas_sgemm_n1.o
 OBJLIST_FMA += fma256_noncblas_sgemm_o.o
 OBJLIST_FMA += fma256_noncblas_sgemm_p.o
+OBJLIST_FMA += fma256_noncblas_sgemm_ns5x2.o
 OBJLIST_FMA += fma256_noncblas_sgemm_ns4x3orig.o
 OBJLIST_FMA += fma256_noncblas_sgemm_ns4x3.o
 OBJLIST_FMA += fma256_noncblas_sgemm_ns3x4.o
 OBJLIST_FMA += fma256_noncblas_sgemm_ns2x4.o
 OBJLIST_FMA += fma256_noncblas_sgemm_ns2x5.o
 OBJLIST_FMA += fma256_noncblas_sgemm_n4x3.o
+
 
 
 -include $(OBJLIST:.o=.d)

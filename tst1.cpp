@@ -206,6 +206,14 @@ extern "C" void fma256_noncblas_sgemm_n5(
 
 extern "C" void fma256_noncblas_sgemm_n5_tune(int m_step, int k_step);
 
+extern "C" void fma256_noncblas_sgemm_nn5x2(
+ int M, int N, int K,
+ float alpha,
+ const float *A, int lda,
+ const float *B, int ldb,
+ float beta,
+ float *C, int ldc);
+
 extern "C" void fma256_noncblas_sgemm_nt5(
  int M, int N, int K,
  float alpha,
@@ -758,10 +766,22 @@ int main(int argz, char** argv)
 #endif
 
 #if 1
-  printf("\n");
   if (hasFma3) {
     ::Sleep(100);
+    printf("\n");
     printf("Testing my 256-bit FMA hack (2x5 inner loop with 1x5 helper)...\n");
+    test_noncblas_sgemm(M, N, K, alpha
+      , &A.at(0), lda, &B.at(0), ldb, beta, &C.at(0), ldc
+      , nIter_meas, nIter_check, &srcC.at(0),
+      fma256_noncblas_sgemm_nn5x2);
+  }
+#endif
+
+#if 1
+  if (hasFma3) {
+    printf("\n");
+    printf("Testing my 256-bit FMA hack (2x5 inner loop with 1x5 helper)...\n");
+    ::Sleep(100);
     test_noncblas_sgemm(M, N, K, alpha
       , &A.at(0), lda, &B.at(0), ldb, beta, &C.at(0), ldc
       , nIter_meas, nIter_check, &srcC.at(0),
@@ -771,6 +791,7 @@ int main(int argz, char** argv)
 
 #if 1
   if (hasFma3) {
+    printf("\n");
     printf("Testing my 256-bit FMA hack (2x5 inner loop with 1x5 helper, no copy of A)...\n");
     ::Sleep(100);
     test_noncblas_sgemm(M, N, K, alpha
@@ -1625,4 +1646,3 @@ static void explore_mk(
 
 #endif
 }
-
