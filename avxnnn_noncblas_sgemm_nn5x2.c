@@ -335,8 +335,8 @@ static void fma256_noncblas_sgemm_core_mn(
       acc4 = MM_FMADD(MM_BROADCAST_Sx(&ARow[4*4+(a_offset)]), b, acc4);
 
 
-    MADD_STEP5x1(acc01, acc01, acc02, acc03, acc04, 2)
-    MADD_STEP5x1(acc11, acc11, acc12, acc13, acc14, 3)
+    MADD_STEP5x1(acc00, acc01, acc02, acc03, acc04, 2)
+    MADD_STEP5x1(acc10, acc11, acc12, acc13, acc14, 3)
     Bcol += 4;
     ARow += 4 * A_WORDS_PER_ITER;
 
@@ -349,10 +349,10 @@ static void fma256_noncblas_sgemm_core_mn(
 
     int k = kSteps - 1;
     do {
-      MADD_STEP5x1(acc01, acc01, acc02, acc03, acc04, 0)
-      MADD_STEP5x1(acc11, acc11, acc12, acc13, acc14, 1)
-      MADD_STEP5x1(acc01, acc01, acc02, acc03, acc04, 2)
-      MADD_STEP5x1(acc11, acc11, acc12, acc13, acc14, 3)
+      MADD_STEP5x1(acc00, acc01, acc02, acc03, acc04, 0)
+      MADD_STEP5x1(acc10, acc11, acc12, acc13, acc14, 1)
+      MADD_STEP5x1(acc00, acc01, acc02, acc03, acc04, 2)
+      MADD_STEP5x1(acc10, acc11, acc12, acc13, acc14, 3)
       Bcol += 4;
       ARow += 4 * A_WORDS_PER_ITER;
     } while (--k);
@@ -469,18 +469,22 @@ static void CopyAndTransposeMjWithMask(
   fp_vector_t* dstCol = pPrm->bb;
   int ldbb = ((unsigned)(nRows+3)/4)*4*B_WORDS_PER_ITER;
   int_vector_t mask = pPrm->mask_n;
+  int masked_b_it = pPrm->masked_b_it;
+  n_bIters -= (masked_b_it >= 0);
   for (int r = 0; r < nRows; ++r) {
     const scalar_t *src = B;
     fp_vector_t* dst = dstCol;
-    for (int c = 0; c < n_bIters-1; ++c) {
+    for (int c = 0; c < n_bIters; ++c) {
       for (int w = 0; w < B_WORDS_PER_ITER; ++w)
         dst[w] = MM_LOADU_Px(&src[w*SIMD_FACTOR]);
       src += SIMD_FACTOR*B_WORDS_PER_ITER;
       dst += ldbb;
     }
-    for (int w = 0; w < B_WORDS_PER_ITER-1; ++w)
-      dst[w] = MM_LOADU_Px(&src[w*SIMD_FACTOR]);
-    dst[B_WORDS_PER_ITER-1] = MM_MASKLOADU_Px(&src[(B_WORDS_PER_ITER-1)*SIMD_FACTOR], mask);
+    if (masked_b_it >= 0) {
+      for (int w = 0; w < B_WORDS_PER_ITER-1; ++w)
+        dst[w] = MM_LOADU_Px(&src[w*SIMD_FACTOR]);
+      dst[B_WORDS_PER_ITER-1] = MM_MASKLOADU_Px(&src[(B_WORDS_PER_ITER-1)*SIMD_FACTOR], mask);
+    }
     B      += ldb;
     dstCol += B_WORDS_PER_ITER;
   }
@@ -653,7 +657,7 @@ static void noncblas_sgemm_wide_n(
     memset((char*)&prm.mask_k, -1, sizeof(*C)*kRem);
   }
 
-  //printf("nMj=%d, nwRemMn=%d, nwRemMj=%d remW_n=%d n_step=%d\n", nMj, nwRemMn, nwRemMj, remW_n, n_step);
+  // printf("nMj=%d, nwRemMn=%d, nwRemMj=%d nRem=%d nwRemMj_masked_b_it=%d\n", nMj, nwRemMn, nwRemMj, nRem, nwRemMj_masked_b_it);
   uint64_t tt = 0;
 
   for (int k = 0; k < K; k += k_step) {
