@@ -357,6 +357,142 @@ static void fma256_noncblas_sgemm_core_mj(
     return;
   }
 
+  if (pPrm->mRem == 3) {
+    // process 3 columns of A
+    const int a_words_per_iter = 3;
+    scalar_t* Crow = C;
+    const fp_vector_t* Bcol = pPrm->bb;
+    for (int b_it = 0; b_it <= b_itLast; Crow += B_WORDS_PER_ITER*SIMD_FACTOR, ++b_it) {
+      const scalar_t* ARow = A;
+
+      fp_vector_t a;
+      fp_vector_t b0 = Bcol[0];
+      fp_vector_t b1 = Bcol[1];
+      Bcol += B_WORDS_PER_ITER;
+
+      scalar_t* CPrefetch = Crow;
+      a = MM_BROADCAST_Sx(&ARow[4*0+0]);
+      fp_vector_t acc00 = MM_MUL_Px(a, b0);
+      fp_vector_t acc10 = MM_MUL_Px(a, b1);
+      PrefetchLines(CPrefetch); CPrefetch += ldc;
+
+      a = MM_BROADCAST_Sx(&ARow[4*1+0]);
+      fp_vector_t acc01 = MM_MUL_Px(a, b0);
+      fp_vector_t acc11 = MM_MUL_Px(a, b1);
+      PrefetchLines(CPrefetch); CPrefetch += ldc;
+
+      a = MM_BROADCAST_Sx(&ARow[4*2+0]);
+      fp_vector_t acc02 = MM_MUL_Px(a, b0);
+      fp_vector_t acc12 = MM_MUL_Px(a, b1);
+      PrefetchLines(CPrefetch); CPrefetch += ldc;
+
+      #define MADD_STEP3x2(a_offset) \
+      b0 = Bcol[0];                               \
+      b1 = Bcol[1];                               \
+      Bcol += B_WORDS_PER_ITER;                   \
+                                                  \
+      a = MM_BROADCAST_Sx(&ARow[4*0+(a_offset)]); \
+      acc00 = MM_FMADD(a, b0, acc00);             \
+      acc10 = MM_FMADD(a, b1, acc10);             \
+                                                  \
+      a = MM_BROADCAST_Sx(&ARow[4*1+(a_offset)]); \
+      acc01 = MM_FMADD(a, b0, acc01);             \
+      acc11 = MM_FMADD(a, b1, acc11);             \
+                                                  \
+      a = MM_BROADCAST_Sx(&ARow[4*2+(a_offset)]); \
+      acc02 = MM_FMADD(a, b0, acc02);             \
+      acc12 = MM_FMADD(a, b1, acc12);
+
+      MADD_STEP3x2(1)
+      MADD_STEP3x2(2)
+      MADD_STEP3x2(3)
+      ARow += a_words_per_iter*4;
+
+      int k = kSteps-1;
+      do {
+        MADD_STEP3x2(0)
+        MADD_STEP3x2(1)
+        MADD_STEP3x2(2)
+        MADD_STEP3x2(3)
+        ARow += a_words_per_iter*4;
+      } while (--k);
+      #undef MADD_STEP3x2
+
+      fp_vector_t alpha_ps = MM_BROADCAST_Sx(&pPrm->alpha);
+      scalar_t* CCol = Crow;
+      if (b_it != pPrm->masked_b_it) {
+        if (pPrm->c_option == C_OPTION_UPDATE) {
+          #define UPDATE_CCOL(ccol, acc0, acc1) \
+          MM_STOREU_Px(&((ccol)[SIMD_FACTOR*0]), MM_FMADD((acc0), alpha_ps, MM_LOADU_Px(&((ccol)[SIMD_FACTOR*0])))); \
+          MM_STOREU_Px(&((ccol)[SIMD_FACTOR*1]), MM_FMADD((acc1), alpha_ps, MM_LOADU_Px(&((ccol)[SIMD_FACTOR*1]))));
+
+          UPDATE_CCOL(CCol, acc00, acc10); CCol += ldc;
+          UPDATE_CCOL(CCol, acc01, acc11); CCol += ldc;
+          UPDATE_CCOL(CCol, acc02, acc12);
+
+          #undef UPDATE_CCOL
+        } else if (pPrm->c_option == C_OPTION_REPLACE) {
+          #define UPDATE_CCOL(ccol, acc0, acc1) \
+          MM_STOREU_Px(&((ccol)[SIMD_FACTOR*0]), MM_MUL_Px((acc0), alpha_ps)); \
+          MM_STOREU_Px(&((ccol)[SIMD_FACTOR*1]), MM_MUL_Px((acc1), alpha_ps));
+
+          UPDATE_CCOL(CCol, acc00, acc10); CCol += ldc;
+          UPDATE_CCOL(CCol, acc01, acc11); CCol += ldc;
+          UPDATE_CCOL(CCol, acc02, acc12);
+
+          #undef UPDATE_CCOL
+        } else { // C_OPTION_MULTIPLY
+          fp_vector_t beta_ps = MM_BROADCAST_Sx(&pPrm->beta);
+          #define UPDATE_CCOL(ccol, acc0, acc1) \
+          MM_STOREU_Px(&((ccol)[SIMD_FACTOR*0]), MM_FMADD((acc0), alpha_ps, MM_MUL_Px(beta_ps, MM_LOADU_Px(&((ccol)[SIMD_FACTOR*0]))))); \
+          MM_STOREU_Px(&((ccol)[SIMD_FACTOR*1]), MM_FMADD((acc1), alpha_ps, MM_MUL_Px(beta_ps, MM_LOADU_Px(&((ccol)[SIMD_FACTOR*1])))));
+
+          UPDATE_CCOL(CCol, acc00, acc10); CCol += ldc;
+          UPDATE_CCOL(CCol, acc01, acc11); CCol += ldc;
+          UPDATE_CCOL(CCol, acc02, acc12);
+
+          #undef UPDATE_CCOL
+        }
+      } else {
+        int_vector_t mask = pPrm->mask_n;
+        if (pPrm->c_option == C_OPTION_UPDATE) {
+          #define UPDATE_CCOL(ccol, acc0, acc1) \
+          MM_STOREU_Px    (&((ccol)[SIMD_FACTOR*0]),       MM_FMADD((acc0), alpha_ps, MM_LOADU_Px    (&((ccol)[SIMD_FACTOR*0])))); \
+          MM_MASKSTOREU_Px(&((ccol)[SIMD_FACTOR*1]), mask, MM_FMADD((acc1), alpha_ps, MM_MASKLOADU_Px(&((ccol)[SIMD_FACTOR*1]), mask)));
+
+          UPDATE_CCOL(CCol, acc00, acc10); CCol += ldc;
+          UPDATE_CCOL(CCol, acc01, acc11); CCol += ldc;
+          UPDATE_CCOL(CCol, acc02, acc12);
+
+
+          #undef UPDATE_CCOL
+        } else if (pPrm->c_option == C_OPTION_REPLACE) {
+          #define UPDATE_CCOL(ccol, acc0, acc1) \
+          MM_STOREU_Px    (&((ccol)[SIMD_FACTOR*0]),       MM_MUL_Px((acc0), alpha_ps)); \
+          MM_MASKSTOREU_Px(&((ccol)[SIMD_FACTOR*1]), mask, MM_MUL_Px((acc1), alpha_ps));
+
+          UPDATE_CCOL(CCol, acc00, acc10); CCol += ldc;
+          UPDATE_CCOL(CCol, acc01, acc11); CCol += ldc;
+          UPDATE_CCOL(CCol, acc02, acc12);
+
+          #undef UPDATE_CCOL
+        } else { // C_OPTION_MULTIPLY
+          fp_vector_t beta_ps = MM_BROADCAST_Sx(&pPrm->beta);
+          #define UPDATE_CCOL(ccol, acc0, acc1) \
+          MM_STOREU_Px    (&((ccol)[SIMD_FACTOR*0]),       MM_FMADD((acc0), alpha_ps, MM_MUL_Px(beta_ps, MM_LOADU_Px    (&((ccol)[SIMD_FACTOR*0]))))); \
+          MM_MASKSTOREU_Px(&((ccol)[SIMD_FACTOR*1]), mask, MM_FMADD((acc1), alpha_ps, MM_MUL_Px(beta_ps, MM_MASKLOADU_Px(&((ccol)[SIMD_FACTOR*1]), mask))));
+
+          UPDATE_CCOL(CCol, acc00, acc10); CCol += ldc;
+          UPDATE_CCOL(CCol, acc01, acc11); CCol += ldc;
+          UPDATE_CCOL(CCol, acc02, acc12);
+
+          #undef UPDATE_CCOL
+        }
+      }
+    }
+    return;
+  }
+
   // handle remaining rows of a - non-interleaved, padded to multiple of 4
   for (int m = pPrm->mRem; m > 0; A += kSteps*4, C += ldc, --m) {
     scalar_t* Crow = C;
@@ -592,7 +728,7 @@ static void fma256_noncblas_sgemm_core_mn(
       Bcol += 4;
       ARow += 4 * a_words_per_iter;
     } while (--k);
-    #undef MADD_STEP5x1
+    #undef MADD_STEP4x1
 
     acc00 = MM_ADD_Px(acc00, acc10);
     acc01 = MM_ADD_Px(acc01, acc11);
@@ -618,6 +754,74 @@ static void fma256_noncblas_sgemm_core_mn(
       MM_MASKSTOREU_Px(C, mask, MM_FMADD(acc01, alpha_ps, MM_MUL_Px(beta_ps, MM_MASKLOADU_Px(C, mask)))); C += ldc;
       MM_MASKSTOREU_Px(C, mask, MM_FMADD(acc02, alpha_ps, MM_MUL_Px(beta_ps, MM_MASKLOADU_Px(C, mask)))); C += ldc;
       MM_MASKSTOREU_Px(C, mask, MM_FMADD(acc03, alpha_ps, MM_MUL_Px(beta_ps, MM_MASKLOADU_Px(C, mask)))); C += ldc;
+    }
+    return;
+  }
+
+  if (pPrm->mRem == 3) {
+    // process 3 columns of A
+    const int a_words_per_iter = 3;
+    const fp_vector_t* Bcol = pPrm->bb;
+    fp_vector_t b;
+
+    b = Bcol[0];
+    fp_vector_t acc00 = MM_MUL_Px(MM_BROADCAST_Sx(&ARow[4*0+0]), b);
+    fp_vector_t acc01 = MM_MUL_Px(MM_BROADCAST_Sx(&ARow[4*1+0]), b);
+    fp_vector_t acc02 = MM_MUL_Px(MM_BROADCAST_Sx(&ARow[4*2+0]), b);
+
+    b = Bcol[1];
+    fp_vector_t acc10 = MM_MUL_Px(MM_BROADCAST_Sx(&ARow[4*0+1]), b);
+    fp_vector_t acc11 = MM_MUL_Px(MM_BROADCAST_Sx(&ARow[4*1+1]), b);
+    fp_vector_t acc12 = MM_MUL_Px(MM_BROADCAST_Sx(&ARow[4*2+1]), b);
+
+    #define MADD_STEP3x1(acc0, acc1, acc2, a_offset) \
+      b = Bcol[(a_offset)]; \
+      acc0 = MM_FMADD(MM_BROADCAST_Sx(&ARow[4*0+(a_offset)]), b, acc0); \
+      acc1 = MM_FMADD(MM_BROADCAST_Sx(&ARow[4*1+(a_offset)]), b, acc1); \
+      acc2 = MM_FMADD(MM_BROADCAST_Sx(&ARow[4*2+(a_offset)]), b, acc2);
+
+
+    MADD_STEP3x1(acc00, acc01, acc02, 2)
+    MADD_STEP3x1(acc10, acc11, acc12, 3)
+    Bcol += 4;
+    ARow += 4 * a_words_per_iter;
+
+    scalar_t* CPrefetch = C;
+    _mm_prefetch((char*)(CPrefetch), _MM_HINT_T0); CPrefetch += ldc;
+    _mm_prefetch((char*)(CPrefetch), _MM_HINT_T0); CPrefetch += ldc;
+    _mm_prefetch((char*)(CPrefetch), _MM_HINT_T0); CPrefetch += ldc;
+
+    int k = kSteps - 1;
+    do {
+      MADD_STEP3x1(acc00, acc01, acc02, 0)
+      MADD_STEP3x1(acc10, acc11, acc12, 1)
+      MADD_STEP3x1(acc00, acc01, acc02, 2)
+      MADD_STEP3x1(acc10, acc11, acc12, 3)
+      Bcol += 4;
+      ARow += 4 * a_words_per_iter;
+    } while (--k);
+    #undef MADD_STEP3x1
+
+    acc00 = MM_ADD_Px(acc00, acc10);
+    acc01 = MM_ADD_Px(acc01, acc11);
+    acc02 = MM_ADD_Px(acc02, acc12);
+
+    fp_vector_t  alpha_ps = MM_BROADCAST_Sx(&pPrm->alpha);
+    int_vector_t mask = pPrm->mask_n;
+
+    if (pPrm->c_option == C_OPTION_UPDATE) {
+      MM_MASKSTOREU_Px(C, mask, MM_FMADD(acc00, alpha_ps, MM_MASKLOADU_Px(C, mask))); C += ldc;
+      MM_MASKSTOREU_Px(C, mask, MM_FMADD(acc01, alpha_ps, MM_MASKLOADU_Px(C, mask))); C += ldc;
+      MM_MASKSTOREU_Px(C, mask, MM_FMADD(acc02, alpha_ps, MM_MASKLOADU_Px(C, mask))); C += ldc;
+    } else if (pPrm->c_option == C_OPTION_REPLACE) {
+      MM_MASKSTOREU_Px(C, mask, MM_MUL_Px(acc00, alpha_ps)); C += ldc;
+      MM_MASKSTOREU_Px(C, mask, MM_MUL_Px(acc01, alpha_ps)); C += ldc;
+      MM_MASKSTOREU_Px(C, mask, MM_MUL_Px(acc02, alpha_ps)); C += ldc;
+    } else { // C_OPTION_MULTIPLY
+      fp_vector_t beta_ps = MM_BROADCAST_Sx(&pPrm->beta);
+      MM_MASKSTOREU_Px(C, mask, MM_FMADD(acc00, alpha_ps, MM_MUL_Px(beta_ps, MM_MASKLOADU_Px(C, mask)))); C += ldc;
+      MM_MASKSTOREU_Px(C, mask, MM_FMADD(acc01, alpha_ps, MM_MUL_Px(beta_ps, MM_MASKLOADU_Px(C, mask)))); C += ldc;
+      MM_MASKSTOREU_Px(C, mask, MM_FMADD(acc02, alpha_ps, MM_MUL_Px(beta_ps, MM_MASKLOADU_Px(C, mask)))); C += ldc;
     }
     return;
   }
@@ -802,6 +1006,34 @@ static void CopyAndInterleaveA(noncblas_sgemm_prm_t* pPrm, const scalar_t *A, in
       dst[1] = a1;
       dst[2] = a2;
       dst[3] = a3;
+      dst += a_words_per_iter;
+    }
+    return;
+  }
+
+  if (pPrm->mRem == 3) {
+    // interleave 3 rows
+    const int a_words_per_iter = 3;
+    const scalar_t *src = A;
+    int k = (unsigned)n_cols / 4;
+    do {
+      fp_vector4_t a0 = MM_LOADU4_Px(&src[0]);
+      fp_vector4_t a1 = MM_LOADU4_Px(&src[lda1]);
+      fp_vector4_t a2 = MM_LOADU4_Px(&src[lda2]);
+      src += 4;
+      dst[0] = a0;
+      dst[1] = a1;
+      dst[2] = a2;
+      dst += a_words_per_iter;
+    } while (--k);
+    if ((unsigned)n_cols % 4 != 0) {
+      int_vector4_t mask = pPrm->mask_k;
+      fp_vector4_t a0 = MM_MASKLOADU4_Px(&src[0],    mask);
+      fp_vector4_t a1 = MM_MASKLOADU4_Px(&src[lda1], mask);
+      fp_vector4_t a2 = MM_MASKLOADU4_Px(&src[lda2], mask);
+      dst[0] = a0;
+      dst[1] = a1;
+      dst[2] = a2;
       dst += a_words_per_iter;
     }
     return;
