@@ -386,7 +386,22 @@ static void fma256_noncblas_sgemm_core_mj(
       fp_vector_t acc12 = MM_MUL_Px(a, b1);
       PrefetchLines(CPrefetch); CPrefetch += ldc;
 
-      #define MADD_STEP3x2(a_offset) \
+      b0 = Bcol[0];
+      b1 = Bcol[1];
+      Bcol += B_WORDS_PER_ITER;
+      a = MM_BROADCAST_Sx(&ARow[4*0+1]);
+      fp_vector_t acc20 = MM_MUL_Px(a, b0);
+      fp_vector_t acc30 = MM_MUL_Px(a, b1);
+
+      a = MM_BROADCAST_Sx(&ARow[4*1+1]);
+      fp_vector_t acc21 = MM_MUL_Px(a, b0);
+      fp_vector_t acc31 = MM_MUL_Px(a, b1);
+
+      a = MM_BROADCAST_Sx(&ARow[4*2+1]);
+      fp_vector_t acc22 = MM_MUL_Px(a, b0);
+      fp_vector_t acc32 = MM_MUL_Px(a, b1);
+
+      #define MADD_STEP3x2(acc00, acc10, acc01, acc11, acc02, acc12, a_offset) \
       b0 = Bcol[0];                               \
       b1 = Bcol[1];                               \
       Bcol += B_WORDS_PER_ITER;                   \
@@ -403,20 +418,27 @@ static void fma256_noncblas_sgemm_core_mj(
       acc02 = MM_FMADD(a, b0, acc02);             \
       acc12 = MM_FMADD(a, b1, acc12);
 
-      MADD_STEP3x2(1)
-      MADD_STEP3x2(2)
-      MADD_STEP3x2(3)
+      MADD_STEP3x2(acc00, acc10, acc01, acc11, acc02, acc12, 2)
+      MADD_STEP3x2(acc20, acc30, acc21, acc31, acc22, acc32, 3)
       ARow += a_words_per_iter*4;
 
       int k = kSteps-1;
       do {
-        MADD_STEP3x2(0)
-        MADD_STEP3x2(1)
-        MADD_STEP3x2(2)
-        MADD_STEP3x2(3)
+        MADD_STEP3x2(acc00, acc10, acc01, acc11, acc02, acc12, 0)
+        MADD_STEP3x2(acc20, acc30, acc21, acc31, acc22, acc32, 1)
+        MADD_STEP3x2(acc00, acc10, acc01, acc11, acc02, acc12, 2)
+        MADD_STEP3x2(acc20, acc30, acc21, acc31, acc22, acc32, 3)
         ARow += a_words_per_iter*4;
       } while (--k);
       #undef MADD_STEP3x2
+
+      acc00 = MM_ADD_Px(acc00, acc20);
+      acc01 = MM_ADD_Px(acc01, acc21);
+      acc02 = MM_ADD_Px(acc02, acc22);
+      acc10 = MM_ADD_Px(acc10, acc30);
+      acc11 = MM_ADD_Px(acc11, acc31);
+      acc12 = MM_ADD_Px(acc12, acc32);
+
 
       fp_vector_t alpha_ps = MM_BROADCAST_Sx(&pPrm->alpha);
       scalar_t* CCol = Crow;
