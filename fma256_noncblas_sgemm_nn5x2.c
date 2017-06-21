@@ -3,6 +3,7 @@
 #include <immintrin.h>
 
 #define func_name fma256_noncblas_sgemm_nn5x2
+#define tune_name fma256_noncblas_sgemm_nn5x2_tune
 
 typedef float   scalar_t;
 typedef __m256  fp_vector_t;

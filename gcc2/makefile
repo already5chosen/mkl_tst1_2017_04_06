@@ -104,6 +104,7 @@ OBJLIST_FMA :=
 OBJLIST_FMA += fma256_noncblas_sgemm_n5.o
 OBJLIST_FMA += fma256_noncblas_sgemm_ns5x2.o
 OBJLIST_FMA += fma256_noncblas_sgemm_ns2x5.o
+OBJLIST_FMA += fma256_noncblas_sgemm_nn5x2.o
 
 
 -include $(OBJLIST:.o=.d)

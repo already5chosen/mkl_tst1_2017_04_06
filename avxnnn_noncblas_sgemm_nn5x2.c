@@ -1303,6 +1303,11 @@ extern uint64_t dbg_tt;
 #include <stdio.h>
 #include <x86intrin.h>
 
+#ifdef  NONCBLAS_SGEMM_TUNE
+//int st_m_step = 0;
+int st_k_step = 0;
+#endif
+
 // N>SIMD_FACTOR
 static void noncblas_sgemm_wide_n(
   int M, int N, int K,
@@ -1325,12 +1330,21 @@ static void noncblas_sgemm_wide_n(
   }
 
   // calculate k_step
+  int k_step;
+  #ifdef  NONCBLAS_SGEMM_TUNE
+  if (st_k_step > 0) {
+    k_step = K;
+    if (st_k_step+3 < K) {
+      k_step = ((unsigned)(st_k_step+3)/4)*4;
+    }
+  } else {
+  #endif
   const int L1_BLOCK_N = L1_BLOCK_SZ/sizeof(scalar_t);
   const int L2_BLOCK_N = L2_BLOCK_SZ/sizeof(scalar_t);
   const int Neff = ((unsigned)(N-1) / n_step + 1) * n_step;
   const int C_N  = m_step_nom*Neff;
   // first try to fit everything into L1
-  int k_step = (L1_BLOCK_N - C_N)/(m_step_nom+Neff);
+  k_step = (L1_BLOCK_N - C_N)/(m_step_nom+Neff);
   if (k_step < K_STEP_MIN) {
     // try to fit everything into L2
     int k_step_l2 = (L2_BLOCK_N - C_N)/(m_step_nom+Neff);
@@ -1356,6 +1370,9 @@ static void noncblas_sgemm_wide_n(
   } else {
     k_step = K;
   }
+  #ifdef  NONCBLAS_SGEMM_TUNE
+  }
+  #endif
 
   // static int uu = 1;
   // if (uu) {
@@ -1483,3 +1500,10 @@ void func_name(
     noncblas_sgemm_narrow_n(M, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
   }
 }
+
+#ifdef  NONCBLAS_SGEMM_TUNE
+void tune_name(int m_step, int k_step) {
+  //st_m_step = m_step;
+  st_k_step = k_step;
+}
+#endif

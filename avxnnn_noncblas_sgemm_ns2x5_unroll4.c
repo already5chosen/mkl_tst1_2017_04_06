@@ -1501,6 +1501,14 @@ static void noncblas_sgemm_wide_n(
   const int K_STEP_NOM = ((unsigned)K_STEP/4)*4 + 1;
   const int K_STEP_MAX = ((unsigned)K_STEP_NOM/2)*3;
   int k_step = K > K_STEP_MAX ? K_STEP_NOM : K;
+  #ifdef  NONCBLAS_SGEMM_TUNE
+  if (st_k_step > 0) {
+    k_step = K;
+    if (st_k_step < K-3) {
+      k_step = ((unsigned)(st_k_step-1)/4)*4 + 1;
+    }
+  }  
+  #endif
 
 #ifdef USE_CONSTANT_M_STEP
   int M_STEP_NOM = M_STEP;
@@ -1549,7 +1557,7 @@ static void noncblas_sgemm_wide_n(
       prm.c_option = (prm.beta == 0) ? C_OPTION_REPLACE : C_OPTION_MULTIPLY;
     int delta_k = K - k;
     if (delta_k > k_step) {
-      if (delta_k < K_STEP_MAX)
+      if ((delta_k-k_step)*2 < k_step)
         k_step = ((unsigned)(delta_k-1)/8 + 1)*4 + 1;
       delta_k = k_step;
     }

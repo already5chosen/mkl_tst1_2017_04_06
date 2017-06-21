@@ -27,6 +27,14 @@ void fma256_noncblas_sgemm_n5(
  float beta,
  float *C, int ldc);
 
+void fma256_noncblas_sgemm_nn5x2(
+ int M, int N, int K,
+ float alpha,
+ const float *A, int lda,
+ const float *B, int ldb,
+ float beta,
+ float *C, int ldc);
+
 void fma256_noncblas_sgemm_ns5(
  int M, int N, int K,
  float alpha,
@@ -42,8 +50,9 @@ void fma256_noncblas_sgemm_ns2x5(
  const float *B, int ldb,
  float beta,
  float *C, int ldc);
- 
+
 void fma256_noncblas_sgemm_n5_tune   (int m_step, int k_step);
+void fma256_noncblas_sgemm_nn5x2_tune(int m_step, int k_step);
 void fma256_noncblas_sgemm_ns5_tune  (int m_step, int k_step);
 void fma256_noncblas_sgemm_ns2x5_tune(int m_step, int k_step);
 
@@ -67,6 +76,7 @@ struct func_tab_entry_t {
 
 static func_tab_entry_t funcTab[] = {
   { "5x2",  fma256_noncblas_sgemm_n5,    fma256_noncblas_sgemm_n5_tune   },
+  { "nn5x2",fma256_noncblas_sgemm_nn5x2, fma256_noncblas_sgemm_nn5x2_tune},
   { "s5x2", fma256_noncblas_sgemm_ns5,   fma256_noncblas_sgemm_ns5_tune  },
   { "s2x5", fma256_noncblas_sgemm_ns2x5, fma256_noncblas_sgemm_ns2x5_tune},
   {0},
@@ -83,9 +93,11 @@ int main(int argz, char** argv)
   int M0 = 100,  M1 = 100;
   int N0 = 300,  N1 = 300;
   int K0 = 1000, K1 = 1000;
+  int T0 = 20,   T1 = 1000;
   int deltaM = 1;
   int deltaN = 1;
   int deltaK = 1;
+  int deltaT = 1;
   float alpha = 1;
   float beta  = 0;
   const int NITER_MIN = 11;
@@ -94,7 +106,7 @@ int main(int argz, char** argv)
   for (int arg_i = 1; arg_i < argz; ++arg_i) {
     char* arg = argv[arg_i];
     static const char* prefTab[] = {
-      "alpha", "beta", "M", "N", "K", "F"
+      "alpha", "beta", "M", "N", "K", "T", "F"
     };
     const int prefTabLen = sizeof(prefTab)/sizeof(prefTab[0]);
     for (int pref_i = 0; pref_i < prefTabLen; ++pref_i) {
@@ -114,7 +126,7 @@ int main(int argz, char** argv)
             case 1: beta  = float(val); break;
             default:break;
           }
-        } else if (pref_i == 5) {
+        } else if (pref_i == 6) {
           for (int i = 0; funcTab[i].name != 0; ++i) {
             if (strcasecmp(funcTab[i].name, &arg[preflen+1])==0) {
               uut_i = i;
@@ -163,6 +175,7 @@ int main(int argz, char** argv)
             case 2: M0 = values[0]; M1 = values[2]; deltaM = values[1]; break;
             case 3: N0 = values[0]; N1 = values[2]; deltaN = values[1]; break;
             case 4: K0 = values[0]; K1 = values[2]; deltaK = values[1]; break;
+            case 5: T0 = values[0]; T1 = values[2]; deltaT = values[1]; break;
             default:break;
           }
         }
@@ -172,9 +185,12 @@ int main(int argz, char** argv)
     next_arg:;
   }
   noncblas_sgemm_func_t uut = funcTab[uut_i].func;
+  noncblas_sgemm_tune_func_t tune_uut = funcTab[uut_i].tune_func;
 
-  printf("# Running SGEMM %s with M=%d:%d:%d, N=%d:%d:%d, K=%d:%d:%d, alpha=%f, beta=%f\n",
-    funcTab[uut_i].name, M0, deltaM, M1, N0, deltaN, N1, K0, deltaK, K1, alpha, beta);
+  if (T1 > K1) T1 = K1;
+  if (T0 > T1) T0 = T1;
+  printf("# Running SGEMM %s with M=%d:%d:%d, N=%d:%d:%d, K=%d:%d:%d, T=%d:%d:%d, alpha=%f, beta=%f\n",
+    funcTab[uut_i].name, M0, deltaM, M1, N0, deltaN, N1, K0, deltaK, K1, T0, deltaT, T1, alpha, beta);
 
   int sz = (M1*N1 + M1*K1 + N1*K1)*sizeof(float);
   int nIter = std::max(MIN_WORKING_SET_SZ/sz, NITER_MIN);
@@ -213,41 +229,44 @@ int main(int argz, char** argv)
         std::vector<uint64_t> dt(nIt);
         const int N_REP = 7;
         uint64_t dtMedArr[N_REP];
-        bool done = false;
-        for (int rep = 0; rep < N_REP; ++rep) {
-          ::Sleep(10);
-          memcpy(C, srcC, c_sz*nIt*sizeof(float));
-          float* A = AB;
-          float* B = &AB[a_sz*nIt];
-          for (int it = 0; it < nIt; ++it) {
-            uint64_t t0 = __rdtsc();
-            uut(
-              m, n, k, alpha,
-              &A[a_sz*it], k,
-              &B[b_sz*it], n,
-              beta,
-              &C[c_sz*it], n);
-            uint64_t t1 = __rdtsc();
-            dt[it] = t1 - t0;
+        for (int t = T0; t <= T1; t += deltaT) {
+          tune_uut(0, t);
+          bool done = false;
+          for (int rep = 0; rep < N_REP; ++rep) {
+            ::Sleep(10);
+            memcpy(C, srcC, c_sz*nIt*sizeof(float));
+            float* A = AB;
+            float* B = &AB[a_sz*nIt];
+            for (int it = 0; it < nIt; ++it) {
+              uint64_t t0 = __rdtsc();
+              uut(
+                m, n, k, alpha,
+                &A[a_sz*it], k,
+                &B[b_sz*it], n,
+                beta,
+                &C[c_sz*it], n);
+              uint64_t t1 = __rdtsc();
+              dt[it] = t1 - t0;
+            }
+            for (int i = 0; i < c_sz*nIt; ++i)
+              dummy += C[i];
+            std::nth_element(dt.begin(), dt.begin()+nIt/2, dt.begin()+nIt);
+            uint64_t dtMed = dt[nIt/2];
+            dtMedArr[rep] = dtMed;
+            std::nth_element(dt.begin(), dt.begin()+1, dt.begin()+nIt);
+            uint64_t dt1 = dt[1];
+            if (double(dtMed) < double(dt1)*1.025) {
+              dtMedArr[N_REP/2] = dtMed;
+              done = true;
+              break;
+            }
           }
-          for (int i = 0; i < c_sz*nIt; ++i)
-            dummy += C[i];
-          std::nth_element(dt.begin(), dt.begin()+nIt/2, dt.begin()+nIt);
-          uint64_t dtMed = dt[nIt/2];
-          dtMedArr[rep] = dtMed;
-          std::nth_element(dt.begin(), dt.begin()+1, dt.begin()+nIt);
-          uint64_t dt1 = dt[1];
-          if (double(dtMed) < double(dt1)*1.025) {
-            dtMedArr[N_REP/2] = dtMed;
-            done = true;
-            break;
+          if (!done) {
+            std::nth_element(dtMedArr, dtMedArr+N_REP/2, dtMedArr+N_REP);
           }
+          printf("%4d %4d %4d %4d %.0f\n", m, n, k, t, double(dtMedArr[N_REP/2]));
+          fflush(stdout);
         }
-        if (!done) {
-          std::nth_element(dtMedArr, dtMedArr+N_REP/2, dtMedArr+N_REP);
-        }
-        printf("%4d %4d %4d %.0f\n", m, n, k, double(dtMedArr[N_REP/2]));
-        fflush(stdout);
       }
     }
   }

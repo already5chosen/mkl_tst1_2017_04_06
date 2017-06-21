@@ -43,6 +43,14 @@ void fma256_noncblas_sgemm_ns2x5(
  float beta,
  float *C, int ldc);
 
+void fma256_noncblas_sgemm_nn5x2(
+ int M, int N, int K,
+ float alpha,
+ const float *A, int lda,
+ const float *B, int ldb,
+ float beta,
+ float *C, int ldc);
+
 }
 
 typedef void (*noncblas_sgemm_func_t)(
@@ -62,6 +70,7 @@ static func_tab_entry_t funcTab[] = {
   { "5x2",  fma256_noncblas_sgemm_n5 },
   { "s5x2", fma256_noncblas_sgemm_ns5 },
   { "s2x5", fma256_noncblas_sgemm_ns2x5 },
+  { "nn5x2", fma256_noncblas_sgemm_nn5x2 },
   {0},
 };
 

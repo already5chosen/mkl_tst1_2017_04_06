@@ -1,10 +1,10 @@
 CC  = gcc
 CPP = g++
-CPPOPT     = -std=c++11 -Wall -mavx -O2
-CPPOPT_AVX = -std=c++11 -Wall -mavx -O1
-CPPOPT_FMA = -std=c++11 -Wall -mavx -O1 -mfma
-COPT_AVX   = -std=c99 -Wall -mavx -O1 -fno-tree-ter
-COPT_FMA   = -std=c99 -Wall -mavx -O1 -mfma
+CPPOPT     = -DNONCBLAS_SGEMM_TUNE -std=c++11 -Wall -mavx -O2
+CPPOPT_AVX = -DNONCBLAS_SGEMM_TUNE -std=c++11 -Wall -mavx -O1
+CPPOPT_FMA = -DNONCBLAS_SGEMM_TUNE -std=c++11 -Wall -mavx -O1 -mfma
+COPT_AVX   = -DNONCBLAS_SGEMM_TUNE -std=c99 -Wall -mavx -O1 -fno-tree-ter
+COPT_FMA   = -DNONCBLAS_SGEMM_TUNE -std=c99 -Wall -mavx -O1 -mfma
 
 COPT_HIGH_LEVEL_ASM :=
 COPT_HIGH_LEVEL_ASM += -fno-auto-inc-dec
@@ -102,6 +102,7 @@ OBJLIST_AVX :=
 
 OBJLIST_FMA :=
 OBJLIST_FMA += fma256_noncblas_sgemm_n5.o
+OBJLIST_FMA += fma256_noncblas_sgemm_nn5x2.o
 OBJLIST_FMA += fma256_noncblas_sgemm_ns5x2.o
 OBJLIST_FMA += fma256_noncblas_sgemm_ns2x5.o
 
