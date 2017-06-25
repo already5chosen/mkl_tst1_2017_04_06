@@ -1094,29 +1094,74 @@ static void fma256_noncblas_sgemm_core_mn(
 static void CopyAndTransposeMj(
   noncblas_sgemm_prm_t* pPrm,
   const scalar_t*       B, int ldb,
-  int                   n_bIters,
+  //int                   n_bIters,
+  int                   nRows)
+{
+  fp_vector_t* dstCol = pPrm->bb;
+  int ldbb = ((unsigned)(nRows+3)/4)*4*B_WORDS_PER_ITER;
+  if (N_STEP_MULTIPLIER == 2 && B_WORDS_PER_ITER == 2) {
+    for (int r = 0; r < nRows; ++r) {
+      fp_vector_t w00 = MM_LOADU_Px(&B[0*SIMD_FACTOR]);
+      fp_vector_t w01 = MM_LOADU_Px(&B[1*SIMD_FACTOR]);
+      fp_vector_t w10 = MM_LOADU_Px(&B[2*SIMD_FACTOR]);
+      fp_vector_t w11 = MM_LOADU_Px(&B[3*SIMD_FACTOR]);
+      B += ldb;
+      dstCol[0] = w00;
+      dstCol[1] = w01;
+      dstCol[ldbb+0] = w10;
+      dstCol[ldbb+1] = w11;
+      dstCol += B_WORDS_PER_ITER;
+    }
+  } else {
+    for (int r = 0; r < nRows; ++r) {
+      const scalar_t *src = B;
+      fp_vector_t* dst = dstCol;
+      // for (int c = 0; c < n_bIters; ++c) {
+      for (int c = 0; c < N_STEP_MULTIPLIER; ++c) {
+        // 'gcc -O1' does not generate good code for memcpy
+        // On the other hand, MSVC does not generate good code for loop
+        // Since these couple of lines is performance-critical and can easily cost 6-7% in time
+        // I coded it in ugly manner with ifdef, to please each compiler with its preferred construct
+        #ifdef _MSC_VER
+        memcpy(dst, src, sizeof(*dst)*B_WORDS_PER_ITER);
+        #else
+        for (int w = 0; w < B_WORDS_PER_ITER; ++w)
+          dst[w] = MM_LOADU_Px(&src[w*SIMD_FACTOR]);
+        #endif
+        src += SIMD_FACTOR*B_WORDS_PER_ITER;
+        dst += ldbb;
+      }
+      B      += ldb;
+      dstCol += B_WORDS_PER_ITER;
+    }
+  }
+}
+
+static void CopyAndTransposeMj2(
+  noncblas_sgemm_prm_t* pPrm,
+  const scalar_t*       B, int ldb,
   int                   nRows)
 {
   fp_vector_t* dstCol = pPrm->bb;
   int ldbb = ((unsigned)(nRows+3)/4)*4*B_WORDS_PER_ITER;
   for (int r = 0; r < nRows; ++r) {
-    const scalar_t *src = B;
-    fp_vector_t* dst = dstCol;
-    for (int c = 0; c < n_bIters; ++c) {
-      // 'gcc -O1' does not generate good code for memcpy
-      // On the other hand, MSVC does not generate good code for loop
-      // Since these couple of lines is performance-critical and can easily cost 6-7% in time
-      // I coded it in ugly manner with ifdef, to please each compiler with its preferred construct
-      #ifdef _MSC_VER
-      memcpy(dst, src, sizeof(*dst)*B_WORDS_PER_ITER);
-      #else
-      for (int w = 0; w < B_WORDS_PER_ITER; ++w)
-        dst[w] = MM_LOADU_Px(&src[w*SIMD_FACTOR]);
-      #endif
-      src += SIMD_FACTOR*B_WORDS_PER_ITER;
-      dst += ldbb;
-    }
-    B      += ldb;
+    fp_vector_t w00 = MM_LOADU_Px(&B[0*SIMD_FACTOR]);
+    fp_vector_t w01 = MM_LOADU_Px(&B[1*SIMD_FACTOR]);
+    fp_vector_t w10 = MM_LOADU_Px(&B[2*SIMD_FACTOR]);
+    fp_vector_t w11 = MM_LOADU_Px(&B[3*SIMD_FACTOR]);
+    fp_vector_t w20 = MM_LOADU_Px(&B[4*SIMD_FACTOR]);
+    fp_vector_t w21 = MM_LOADU_Px(&B[5*SIMD_FACTOR]);
+    fp_vector_t w30 = MM_LOADU_Px(&B[6*SIMD_FACTOR]);
+    fp_vector_t w31 = MM_LOADU_Px(&B[7*SIMD_FACTOR]);
+    B += ldb;
+    dstCol[0]        = w00;
+    dstCol[1]        = w01;
+    dstCol[ldbb*1+0] = w10;
+    dstCol[ldbb*1+1] = w11;
+    dstCol[ldbb*2+0] = w20;
+    dstCol[ldbb*2+1] = w21;
+    dstCol[ldbb*3+0] = w30;
+    dstCol[ldbb*3+1] = w31;
     dstCol += B_WORDS_PER_ITER;
   }
 }
@@ -1370,29 +1415,33 @@ static void noncblas_sgemm_wide_n(
   } else {
     k_step = K;
   }
+  k_step = K < 300 ? K : 192;
   #ifdef  NONCBLAS_SGEMM_TUNE
   }
   #endif
 
+  #ifndef  NONCBLAS_SGEMM_TUNE
   // static int uu = 1;
   // if (uu) {
     // printf("k_step=%d m_step=%d\n", k_step, m_step_nom);
     // uu = 0;
   // }
+  #endif
 
+  const int CACHE_LINE_SZ = 64;
   const int k_step_ex = ((unsigned)(k_step-1)/4 + 1)*4;
-  const int bb_sz = SIMD_ELEM_PEC_COL_MJ*k_step_ex;
-  const int aa_sz = (m_step_nom*k_step_ex-1)/SIMD_FACTOR + 1;
-  const int workBufSz = aa_sz + bb_sz;
+  const int bb_sz = (unsigned)(SIMD_ELEM_PEC_COL_MJ*k_step_ex*sizeof(fp_vector_t)-1)/CACHE_LINE_SZ+1;
+  const int aa_sz = (unsigned)(m_step_nom*k_step_ex*sizeof(scalar_t) - 1)/CACHE_LINE_SZ+1;
+  const int workBufSz = aa_sz + bb_sz*2;
   // I didn't find a standard portable way to allocate 32-byte aligned buffer
   // So I am doing it in hackish, but reliable way
-  char* workBufAlloc = malloc((workBufSz+1)*sizeof(fp_vector_t));
-  uintptr_t workBufAdj = (0-(uintptr_t)(workBufAlloc)) % sizeof(fp_vector_t);
-  fp_vector_t* workBuf = (fp_vector_t*)(workBufAlloc+workBufAdj);
+  char* workBufAlloc = malloc((workBufSz+1)*CACHE_LINE_SZ);
+  uintptr_t workBufAdj = (0-(uintptr_t)(workBufAlloc)) % CACHE_LINE_SZ;
+  char* workBuf = workBufAlloc+workBufAdj;
 
   noncblas_sgemm_prm_t prm;
   prm.aa = (fp_vector4_t*)(workBuf+0);
-  prm.bb = (fp_vector_t*) (workBuf+aa_sz);
+  prm.bb = (fp_vector_t*) (workBuf+aa_sz*CACHE_LINE_SZ);
   prm.lda = lda;
   prm.ldc = ldc;
   prm.alpha = alpha;
@@ -1447,24 +1496,62 @@ static void noncblas_sgemm_wide_n(
 
       scalar_t *Crow = &C[m*ldc];
       const scalar_t *Brow = &B[k*ldb];
-      for (int ni = 0; ni < nMj; ++ni) {
-        // process full-width major rectangles
-        int n = ni * n_step;
+      int nMj_h = (unsigned)nMj/2;
+
+      fp_vector_t* bb = prm.bb;
+      int ldbb = kSteps*4*B_WORDS_PER_ITER;
+      for (int ni = 0; ni < nMj_h; ++ni) {
+        // process two full-width major rectangles
+        int n = ni * n_step * 2;
         uint64_t t0 = __rdtsc();
-        CopyAndTransposeMj(&prm, &Brow[n], ldb, N_STEP_MULTIPLIER, delta_k);
+        prm.bb = bb;
+        CopyAndTransposeMj2(&prm, &Brow[n], ldb, delta_k);
+        uint64_t t1 = __rdtsc();
+        tt += t1 - t0;
+
+        prm.bb = bb;
+        fma256_noncblas_sgemm_core_mj(&prm, &Crow[n], N_STEP_MULTIPLIER, kSteps);
+        prm.bb = bb + ldbb*N_STEP_MULTIPLIER;
+        fma256_noncblas_sgemm_core_mj(&prm, &Crow[n+n_step], N_STEP_MULTIPLIER, kSteps);
+      }
+      prm.bb = bb;
+      if (nMj & 1)
+      {
+        // process last full-width major rectangles
+        int n = (nMj-1) * n_step;
+        uint64_t t0 = __rdtsc();
+        CopyAndTransposeMj(&prm, &Brow[n], ldb, delta_k);
         uint64_t t1 = __rdtsc();
         tt += t1 - t0;
         fma256_noncblas_sgemm_core_mj(&prm, &Crow[n], N_STEP_MULTIPLIER, kSteps);
       }
+      #if 0
+      for (int ni = 0; ni < nMj; ++ni) {
+        // process full-width major rectangles
+        int n = ni * n_step;
+        uint64_t t0 = __rdtsc();
+        // CopyAndTransposeMj(&prm, &Brow[n], ldb, N_STEP_MULTIPLIER, delta_k);
+        CopyAndTransposeMj(&prm, &Brow[n], ldb, delta_k);
+        uint64_t t1 = __rdtsc();
+        tt += t1 - t0;
+        fma256_noncblas_sgemm_core_mj(&prm, &Crow[n], N_STEP_MULTIPLIER, kSteps);
+      }
+      #endif
       if (nwRemMj > 0) {
+        uint64_t t0 = __rdtsc();
         prm.masked_b_it = nwRemMj_masked_b_it;
         int n = nMj * n_step;
         CopyAndTransposeMjWithMask(&prm, &Brow[n], ldb, nwRemMj, delta_k);
+        uint64_t t1 = __rdtsc();
+        tt += t1 - t0;
         fma256_noncblas_sgemm_core_mj(&prm, &Crow[n], nwRemMj, kSteps);
       }
       if (nwRemMn > 0) {
+        uint64_t t0 = __rdtsc();
         int n = nMj * n_step + nwRemMj*B_WORDS_PER_ITER*SIMD_FACTOR;
         CopyAndTransposeMnWithMask(&prm, &Brow[n], ldb, delta_k);
+        uint64_t t1 = __rdtsc();
+        tt += t1 - t0;
         fma256_noncblas_sgemm_core_mn(&prm, &Crow[n], kSteps);
       }
     }
