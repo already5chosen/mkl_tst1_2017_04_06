@@ -27,9 +27,8 @@ typedef __m128i int_vector4_t;
 enum {
  M_STEP            = 260,
  N_STEP_MULTIPLIER = 2,
- K_STEP_MIN        = 17,
- L1_BLOCK_SZ       = 32*1024,
- L2_BLOCK_SZ       = 144*1024,
+ K_STEP_NOM        = 192,
+ K_STEP_MAX        = 300,
 };
 
 #include "avxnnn_noncblas_sgemm_nn5x2.c"
