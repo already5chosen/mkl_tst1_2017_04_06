@@ -148,7 +148,7 @@ OBJLIST_FMA += fma256_noncblas_sgemm_n4x3.o
 -include $(OBJLIST_FMA:.o=.d)
 
 tst1.exe : $(OBJLIST) $(OBJLIST_AVX) $(OBJLIST_FMA)
-	${CPP} $+ -o$@
+	${CPP} $+  -l libopenblas -o$@
 
 /d/share/mkl/mkl_tst1_g.exe : tst1.exe
 	cp tst1.exe /d/share/mkl/mkl_tst1_g.exe

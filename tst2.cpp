@@ -12,6 +12,8 @@
 #include <windows.h>
 #ifndef NO_MKL
 #include "mkl_cblas.h"
+#else
+#include "OpenBLAS/cblas.h"
 #endif
 #if defined(__GNUC__) || defined(__clang__)
 #include <cpuid.h>
@@ -53,6 +55,25 @@ void fma256_noncblas_sgemm_nn5x2(
 
 }
 
+// adapt OpenBLAS/MKL cblas_sgemm to my 'noncblas' calling order
+static void BLAS_noncblas_sgemm(
+ int M, int N, int K,
+ float alpha,
+ const float *A, int lda,
+ const float *B, int ldb,
+ float beta,
+ float *C, int ldc)
+{
+  cblas_sgemm(
+    CblasRowMajor, CblasNoTrans, CblasNoTrans
+    , M, N, K
+    , alpha
+    , A, lda
+    , B, ldb
+    , beta
+    , C, ldc);
+}
+
 typedef void (*noncblas_sgemm_func_t)(
   int M, int N, int K,
   float alpha,
@@ -71,6 +92,7 @@ static func_tab_entry_t funcTab[] = {
   { "s5x2", fma256_noncblas_sgemm_ns5 },
   { "s2x5", fma256_noncblas_sgemm_ns2x5 },
   { "nn5x2", fma256_noncblas_sgemm_nn5x2 },
+  { "blas", BLAS_noncblas_sgemm },
   {0},
 };
 

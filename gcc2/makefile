@@ -112,7 +112,7 @@ OBJLIST_FMA += fma256_noncblas_sgemm_nn5x2.o
 -include $(OBJLIST_FMA:.o=.d)
 
 tst2.exe : $(OBJLIST) $(OBJLIST_AVX) $(OBJLIST_FMA)
-	${CPP} $+ -o$@
+	${CPP} $+ -l libopenblas -o$@
 
 clean:
 	rm *.o *.d $(ALL_EXE)

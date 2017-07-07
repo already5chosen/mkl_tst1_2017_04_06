@@ -16,6 +16,7 @@
 #if defined(__GNUC__) || defined(__clang__)
 #include <cpuid.h>
 #endif
+#include "OpenBLAS/cblas.h"
 
 
 void ref_noncblas_sgemm(
@@ -399,6 +400,26 @@ static void MKL_noncblas_sgemm(
 }
 #endif
 
+// adapt OpenBLAS cblas_sgemm to my 'noncblas' calling order
+static void OpenBLAS_noncblas_sgemm(
+ int M, int N, int K,
+ float alpha,
+ const float *A, int lda,
+ const float *B, int ldb,
+ float beta,
+ float *C, int ldc)
+{
+  cblas_sgemm(
+    CblasRowMajor, CblasNoTrans, CblasNoTrans
+    , M, N, K
+    , alpha
+    , A, lda
+    , B, ldb
+    , beta
+    , C, ldc);
+}
+
+
 static void test_noncblas_sgemm(
  int M, int N, int K,
  float alpha,
@@ -579,6 +600,14 @@ int main(int argz, char** argv)
     , nIter_meas, nIter_check, &srcC.at(0),
     MKL_noncblas_sgemm);
 #endif
+#endif
+
+#if 1
+  printf("\nTesting OpenBLAS...\n");
+  test_noncblas_sgemm(M, N, K, alpha
+    , &A.at(0), lda, &B.at(0), ldb, beta, &C.at(0), ldc
+    , nIter_meas, nIter_check, &srcC.at(0),
+    OpenBLAS_noncblas_sgemm);
 #endif
 
 #if 0
@@ -1065,6 +1094,7 @@ void (*uut)(
  float *C, int ldc)
  )
 {
+  fflush(stdout);
   LARGE_INTEGER pfr;
   ::QueryPerformanceFrequency(&pfr);
   for (int i = 0; i < nIter_meas*M*ldc; ++i)
