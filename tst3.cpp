@@ -125,12 +125,18 @@ int main(int argz, char** argv)
   int deltaK = 1;
   float alpha = 1;
   float beta  = 0;
+  int dLDA = 0;
+  int dLDB = 0;
+  int dLDC = 0;
   const int NITER = 3;
 
   for (int arg_i = 1; arg_i < argz; ++arg_i) {
     char* arg = argv[arg_i];
     static const char* prefTab[] = {
-      "alpha", "beta", "M", "N", "K", "F"
+      "alpha", "beta",
+      "M", "N", "K",
+      "F",
+      "dLDA", "dLDB", "dLDC"
     };
     const int prefTabLen = sizeof(prefTab)/sizeof(prefTab[0]);
     for (int pref_i = 0; pref_i < prefTabLen; ++pref_i) {
@@ -156,6 +162,23 @@ int main(int argz, char** argv)
               uut_i = i;
               break;
             }
+          }
+        } else if (pref_i > 5) {
+          // dLDx
+          char* p = &arg[preflen+1];
+          char* endp;
+          long val = strtol(p, &endp, 0);
+          if (endp==p || val < 0) {
+            if (endp != p)
+              *endp = 0;
+            fprintf(stderr, "Bad parameter '%s'. '%s' is not a non-negative number.\n", arg, p);
+            return 1;
+          }
+          switch (pref_i) {
+            case 6: dLDA = val; break;
+            case 7: dLDB = val; break;
+            case 8: dLDC = val; break;
+            default:break;
           }
         } else {
           // range arguments
@@ -209,13 +232,26 @@ int main(int argz, char** argv)
   }
   noncblas_sgemm_func_t uut = funcTab[uut_i].func;
 
-  printf("# Running SGEMM %s with M=%d:%d:%d, N=%d:%d:%d, K=%d:%d:%d, alpha=%f, beta=%f\n",
-    funcTab[uut_i].name, M0, deltaM, M1, N0, deltaN, N1, K0, deltaK, K1, alpha, beta);
+  char LDAStr[40]={0}; if (dLDA) sprintf(LDAStr, ", LDA=K+%d", dLDA);
+  char LDBStr[40]={0}; if (dLDB) sprintf(LDBStr, ", LDB=N+%d", dLDB);
+  char LDCStr[40]={0}; if (dLDC) sprintf(LDCStr, ", LDC=N+%d", dLDC);
+
+  printf("# Running SGEMM %s with M=%d:%d:%d, N=%d:%d:%d, K=%d:%d:%d, alpha=%f, beta=%f%s%s%s\n",
+    funcTab[uut_i].name
+    , M0, deltaM, M1
+    , N0, deltaN, N1
+    , K0, deltaK, K1
+    , alpha, beta
+    , LDAStr, LDBStr, LDCStr
+    );
 
   int nIter = NITER;
-  size_t A_SZ = ((M1*K1*sizeof(float)-1)/64 + 1)*(64/sizeof(float));
-  size_t B_SZ = ((K1*N1*sizeof(float)-1)/64 + 1)*(64/sizeof(float));
-  size_t C_SZ = ((M1*N1*sizeof(float)-1)/64 + 1)*(64/sizeof(float));
+  int LDA = K1 + dLDA;
+  int LDB = N1 + dLDB;
+  int LDC = N1 + dLDC;
+  size_t A_SZ = ((M1*LDA*sizeof(float)-1)/64 + 1)*(64/sizeof(float));
+  size_t B_SZ = ((K1*LDB*sizeof(float)-1)/64 + 1)*(64/sizeof(float));
+  size_t C_SZ = ((M1*LDC*sizeof(float)-1)/64 + 1)*(64/sizeof(float));
   char* bufAlloc = new char [(A_SZ+B_SZ+C_SZ*3)*nIter*sizeof(float)+64];
   uintptr_t bufAdj = (0-(uintptr_t)(bufAlloc)) % 64;
   float* buf = (float*)(bufAlloc+bufAdj);
@@ -239,20 +275,22 @@ int main(int argz, char** argv)
   bool ok = true;
   for (int m = M0; m <= M1 && ok; m += deltaM) {
     for (int n = N0; n <= N1 && ok; n += deltaN) {
+      int ldb = n + dLDB;
+      int ldc = n + dLDC;
       for (int k = K0; k <= K1 && ok; k += deltaK) {
-        int a_sz = ((m*k*sizeof(float)-1)/64 + 1)*(64/sizeof(float));
-        int b_sz = ((k*n*sizeof(float)-1)/64 + 1)*(64/sizeof(float));
-        int c_sz = ((m*n*sizeof(float)-1)/64 + 1)*(64/sizeof(float));
+        int lda = k + dLDA;
+        int a_sz = ((m*lda*sizeof(float)-1)/64 + 1)*(64/sizeof(float));
+        int b_sz = ((k*ldb*sizeof(float)-1)/64 + 1)*(64/sizeof(float));
+        int c_sz = ((m*ldc*sizeof(float)-1)/64 + 1)*(64/sizeof(float));
 
         memcpy(resC, srcC, c_sz*nIter*sizeof(float));
         float* A = AB;
         float* B = &AB[a_sz*nIter];
-        int ldc = n;
         for (int it = 0; it < nIter; ++it) {
           uut(
             m, n, k, alpha,
-            &A[a_sz*it], k,
-            &B[b_sz*it], n,
+            &A[a_sz*it], lda,
+            &B[b_sz*it], ldb,
             beta,
             &resC[c_sz*it], ldc);
         }
@@ -264,8 +302,8 @@ int main(int argz, char** argv)
         for (int it = 0; it < nIter && ok; ++it) {
           ref_noncblas_sgemm(
             m, n, k, alpha,
-            &A[a_sz*it], k,
-            &B[b_sz*it], n,
+            &A[a_sz*it], lda,
+            &B[b_sz*it], ldb,
             beta,
             &refC[c_sz*it], ldc);
           ok = cmp_results(
@@ -301,6 +339,7 @@ static bool cmp_results(
   double s1Ref = 0;
   double s2Ref = 0;
   int maxI = 0;
+  int margI = -1;
   for (int m = 0; m < M; ++m) {
     for (int n = 0; n < N; ++n) {
       double refV = ref[m*ld+n];
@@ -314,17 +353,34 @@ static bool cmp_results(
       s1Ref += refV;
       s2Ref += refV*refV;
     }
+    if (margI < 0)
+    for (int n = N; n < ld; ++n) {
+      float refV = ref[m*ld+n];
+      float resV = res[m*ld+n];
+      if (refV != resV) {
+        margI = m*ld+n;
+        break;
+      }
+    }
   }
   double stdErr = sqrt(s2Err / (M*N));
   double stdRef = sqrt(s2Ref*(M*N) - s1Ref*s1Ref)/((M*N));
   bool ok = maxErr <= stdRef*1e-5;
-  printf("%4d %4d %4d : %.3e/%.3e=%.3e. %.3e at [%3d,%3d] %18.10e vs %18.10e %s\n"
+  printf("%4d %4d %4d : %.3e/%.3e=%.3e. %.3e at [%3d,%3d] %18.10e vs %18.10e %s"
     , M, N, K
     , stdErr, stdRef, stdErr/stdRef
     , maxErr, maxI/ld, maxI%ld
     , double(ref[maxI]), double(res[maxI])
     , !ok ? "FAIL !!!" : (maxErr > stdRef*3e-5 || stdErr > stdRef*1e-6 ? "Sucks !" : "")
     );
+  if (ok && margI >= 0) {
+    ok = false;
+    printf("Margin mismatch at [%3d,%3d] %18.10e vs %18.10e FAIL !!!"
+    , margI/ld, margI%ld
+    , double(ref[margI]), double(res[margI])
+    );
+  }
+  printf("\n");
   return ok;
 }
 
