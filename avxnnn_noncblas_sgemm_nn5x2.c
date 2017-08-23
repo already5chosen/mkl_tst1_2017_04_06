@@ -11,10 +11,13 @@ enum {
 };
 
 typedef struct {
+  const scalar_t *A;
+  const scalar_t *B;
+  scalar_t       *C;
+  unsigned      M, N, K;
+  int           lda, ldb, ldc;
   int           mDiv;
   int           mRem;
-  int           lda;
-  int           ldc;
   int           c_option;
   int           masked_b_it;
   int           hasMinor;
@@ -1079,11 +1082,12 @@ static void fma256_noncblas_sgemm_core(
 
 static void CopyAndTransposeBMjx2(
   noncblas_sgemm_prm_t* pPrm,
-  const scalar_t*       B, int ldb,
+  const scalar_t*       B,
   int                   nRows)
 {
   fp_vector_t* dstCol = pPrm->bb;
   int ldbb = ((unsigned)(nRows+3)/4)*4*B_WORDS_PER_ITER;
+  int ldb = pPrm->ldb;
   for (int r = 0; r < nRows; ++r) {
     fp_vector_t w00 = MM_LOADU_Px(&B[0*SIMD_FACTOR]);
     fp_vector_t w01 = MM_LOADU_Px(&B[1*SIMD_FACTOR]);
@@ -1108,13 +1112,14 @@ static void CopyAndTransposeBMjx2(
 
 static void CopyAndTransposeBRem(
   noncblas_sgemm_prm_t* pPrm,
-  const scalar_t*       B, int ldb,
+  const scalar_t*       B,
   int                   nRows,
   int                   nw)
 {
   fp_vector_t* dstCol = pPrm->bb;
   int_vector_t mask = pPrm->mask_n;
   int ldbb = ((unsigned)(nRows+3)/4)*4*B_WORDS_PER_ITER;
+  int ldb = pPrm->ldb;
   switch (nw) {
     case 1:
     {
@@ -1404,24 +1409,18 @@ int st_k_step = 0;
 #endif
 
 // N>SIMD_FACTOR
-static void noncblas_sgemm_wide_n(
-  int M, int N, int K,
-  scalar_t alpha,
-  const scalar_t *A, int lda,
-  const scalar_t *B, int ldb,
-  scalar_t beta,
-  scalar_t *C, int ldc)
+static void noncblas_sgemm_wide_n(noncblas_sgemm_prm_t* pPrm)
 {
-  int nMj       = (unsigned)N / n_step;
-  unsigned nRem = (unsigned)N % n_step;
+  int nMj       = pPrm->N / n_step;
+  unsigned nRem = pPrm->N % n_step;
   int nwRem     = (nRem+SIMD_FACTOR-1) / SIMD_FACTOR;
   int nwRemMj   = (unsigned)nwRem / B_WORDS_PER_ITER;
   int nwRemMn   = (unsigned)nwRem % B_WORDS_PER_ITER;
 
-  int m_step_nom = M;
+  int m_step_nom = pPrm->M;
   if (m_step_nom > (M_STEP/2)*3) {
-    int m_Nsteps = (M-1)/M_STEP + 1;
-    m_step_nom = ((M-1)/(m_Nsteps*A_WORDS_PER_ITER) + 1) * A_WORDS_PER_ITER;
+    int m_Nsteps = (m_step_nom-1)/M_STEP + 1;
+    m_step_nom = ((m_step_nom-1)/(m_Nsteps*A_WORDS_PER_ITER) + 1) * A_WORDS_PER_ITER;
   }
 
   // calculate k_step
@@ -1434,10 +1433,10 @@ static void noncblas_sgemm_wide_n(
     }
   } else {
   #endif
-  k_step = K;
-  if (K > K_STEP_MAX) {
-    int k_Nsteps = (K-1)/K_STEP_NOM + 1;
-    k_step = ((K-1)/(k_Nsteps*4) + 1) * 4;
+  k_step = pPrm->K;
+  if (k_step > K_STEP_MAX) {
+    int k_Nsteps = (k_step-1)/K_STEP_NOM + 1;
+    k_step = ((k_step-1)/(k_Nsteps*4) + 1) * 4;
   }
   #ifdef  NONCBLAS_SGEMM_TUNE
   }
@@ -1459,39 +1458,30 @@ static void noncblas_sgemm_wide_n(
   uintptr_t workBufAdj = (0-(uintptr_t)(workBufAlloc)) % CACHE_LINE_SZ;
   char* workBuf = workBufAlloc+workBufAdj;
 
-  noncblas_sgemm_prm_t prm;
-  prm.aa = (fp_vector4_t*)(workBuf+0);
+  pPrm->aa = (fp_vector4_t*)(workBuf+0);
   fp_vector_t* bb = (fp_vector_t*) (workBuf+aa_sz*CACHE_LINE_SZ);
-  prm.lda = lda;
-  prm.ldc = ldc;
-  prm.alpha = alpha;
-  prm.beta  = beta;
 
-  memset(&prm.mask_n, -1, sizeof(prm.mask_n));
   int nwRemMj_masked_b_it = -1;
   nRem %= SIMD_FACTOR;
-  if (nRem > 0) { // mask off elements of rightmost SIMD word in B and C
-    memset(&prm.mask_n, 0, sizeof(prm.mask_n));
-    memset((char*)&prm.mask_n, -1, sizeof(*C)*nRem);
-    if (nwRemMn == 0)
-      nwRemMj_masked_b_it =  nwRemMj - 1;
-  }
+  if (nRem > 0 && nwRemMn == 0)
+    nwRemMj_masked_b_it =  nwRemMj - 1;
 
-  memset(&prm.mask_k, -1, sizeof(prm.mask_k));
-  unsigned kRem = (unsigned)K % 4;
+
+  memset(&pPrm->mask_k, -1, sizeof(pPrm->mask_k));
+  unsigned kRem = pPrm->K % 4;
   if (kRem > 0) { // mask off elements of rightmost SIMD word in A
-    memset(&prm.mask_k, 0, sizeof(prm.mask_k));
-    memset((char*)&prm.mask_k, -1, sizeof(*C)*kRem);
+    memset(&pPrm->mask_k, 0, sizeof(pPrm->mask_k));
+    memset((char*)&pPrm->mask_k, -1, sizeof(scalar_t)*kRem);
   }
 
   // printf("nMj=%d, nwRemMn=%d, nwRemMj=%d nRem=%d nwRemMj_masked_b_it=%d\n", nMj, nwRemMn, nwRemMj, nRem, nwRemMj_masked_b_it);
   uint64_t tt = 0;
 
-  for (int k = 0; k < K; k += k_step) {
-    prm.c_option = C_OPTION_UPDATE;
-    if (k==0 && prm.beta != 1.0f)
-      prm.c_option = (prm.beta == 0) ? C_OPTION_REPLACE : C_OPTION_MULTIPLY;
-    int delta_k = K - k;
+  for (int k = 0; k < pPrm->K; k += k_step) {
+    pPrm->c_option = C_OPTION_UPDATE;
+    if (k==0 && pPrm->beta != 1.0f)
+      pPrm->c_option = (pPrm->beta == 0) ? C_OPTION_REPLACE : C_OPTION_MULTIPLY;
+    int delta_k = pPrm->K - k;
     if (delta_k > k_step) {
       if ((delta_k-k_step)*2 < k_step)
         k_step = ((unsigned)(delta_k-1)/(4*2) + 1)*4;
@@ -1500,59 +1490,59 @@ static void noncblas_sgemm_wide_n(
     const int kSteps = (unsigned)(delta_k-1)/4 + 1;
 
     int m_step = m_step_nom;
-    for (int m = 0; m < M; m += m_step) {
-      int delta_m = M - m;
+    for (int m = 0; m < pPrm->M; m += m_step) {
+      int delta_m = pPrm->M - m;
       if (delta_m > m_step) {
         if ((delta_m - m_step)*2 < m_step)
           m_step = ((unsigned)(delta_m-1)/(A_WORDS_PER_ITER*2) + 1)*A_WORDS_PER_ITER;
         delta_m = m_step;
       }
 
-      prm.mDiv = delta_m / A_WORDS_PER_ITER;
-      prm.mRem = delta_m - prm.mDiv*A_WORDS_PER_ITER;
+      pPrm->mDiv = delta_m / A_WORDS_PER_ITER;
+      pPrm->mRem = delta_m - pPrm->mDiv*A_WORDS_PER_ITER;
 
-      prm.masked_b_it = -1;          // all words in use
-      CopyAndInterleaveA(&prm, &A[m*lda+k], delta_k);
+      pPrm->masked_b_it = -1;          // all words in use
+      CopyAndInterleaveA(pPrm, &pPrm->A[m*pPrm->lda+k], delta_k);
 
-      scalar_t *Crow = &C[m*ldc];
-      const scalar_t *Brow = &B[k*ldb];
+      scalar_t *Crow = &pPrm->C[m*pPrm->ldc];
+      const scalar_t *Brow = &pPrm->B[k*pPrm->ldb];
 
       int ldbb = kSteps*4*B_WORDS_PER_ITER;
-      prm.hasMinor = 0;
+      pPrm->hasMinor = 0;
       for (int ni = 0; ni < nMj_h; ++ni) {
         // process two full-width major rectangles
         int n = ni * n_step * 2;
         uint64_t t0 = __rdtsc();
-        prm.bb = bb;
-        CopyAndTransposeBMjx2(&prm, &Brow[n], ldb, delta_k);
+        pPrm->bb = bb;
+        CopyAndTransposeBMjx2(pPrm, &Brow[n], delta_k);
         uint64_t t1 = __rdtsc();
         tt += t1 - t0;
 
-        prm.bb = bb;
-        fma256_noncblas_sgemm_core(&prm, &Crow[n], N_STEP_MULTIPLIER, kSteps);
-        prm.bb += ldbb*N_STEP_MULTIPLIER;
-        fma256_noncblas_sgemm_core(&prm, &Crow[n+n_step], N_STEP_MULTIPLIER, kSteps);
+        pPrm->bb = bb;
+        fma256_noncblas_sgemm_core(pPrm, &Crow[n], N_STEP_MULTIPLIER, kSteps);
+        pPrm->bb += ldbb*N_STEP_MULTIPLIER;
+        fma256_noncblas_sgemm_core(pPrm, &Crow[n+n_step], N_STEP_MULTIPLIER, kSteps);
       }
 
       if (nwRem_ex != 0) {
         int n = nMj_h * n_step * 2;
         uint64_t t0 = __rdtsc();
-        prm.bb = bb;
-        CopyAndTransposeBRem(&prm, &Brow[n], ldb, delta_k, nwRem_ex);
+        pPrm->bb = bb;
+        CopyAndTransposeBRem(pPrm, &Brow[n], delta_k, nwRem_ex);
         uint64_t t1 = __rdtsc();
         tt += t1 - t0;
         if (nMj_r != 0) {
           if (nwRemMj == 0)
-            prm.masked_b_it = nwRemMj_masked_b_it;
+            pPrm->masked_b_it = nwRemMj_masked_b_it;
           // process last full-width major rectangles
-          fma256_noncblas_sgemm_core(&prm, &Crow[n], N_STEP_MULTIPLIER, kSteps);
+          fma256_noncblas_sgemm_core(pPrm, &Crow[n], N_STEP_MULTIPLIER, kSteps);
           n += n_step;
-          prm.bb += ldbb*N_STEP_MULTIPLIER;
+          pPrm->bb += ldbb*N_STEP_MULTIPLIER;
         }
         if ((nwRemMj | nwRemMn) != 0) {
-          prm.masked_b_it = nwRemMj_masked_b_it;
-          prm.hasMinor = nwRemMn;
-          fma256_noncblas_sgemm_core(&prm, &Crow[n], nwRemMj, kSteps);
+          pPrm->masked_b_it = nwRemMj_masked_b_it;
+          pPrm->hasMinor = nwRemMn;
+          fma256_noncblas_sgemm_core(pPrm, &Crow[n], nwRemMj, kSteps);
         }
       }
     }
@@ -1582,8 +1572,29 @@ void func_name(
   scalar_t beta,
   scalar_t *C, int ldc)
 {
+  if (M < 1 || N < 1 || K < 1)
+    return;
+
+  noncblas_sgemm_prm_t prm={0};
+  unsigned NRem = ((unsigned)(N-1) % SIMD_FACTOR) + 1;
+  // mask on elements of rightmost SIMD word in B and C
+  for (unsigned i = 0; i < NRem; ++i)
+    ((uint8_t*)&prm.mask_n)[sizeof(scalar_t)*(i+1)-1] = (uint8_t)(-1);
+
+  prm.A     = A;
+  prm.B     = B;
+  prm.C     = C;
+  prm.M     = M;
+  prm.N     = N;
+  prm.K     = K;
+  prm.lda   = lda;
+  prm.ldb   = ldb;
+  prm.ldc   = ldc;
+  prm.alpha = alpha;
+  prm.beta  = beta;
+
   if (N > SIMD_FACTOR) {
-    noncblas_sgemm_wide_n(M, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
+    noncblas_sgemm_wide_n(&prm);
   } else if (N >= 1) {
     noncblas_sgemm_narrow_n(M, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
   }
