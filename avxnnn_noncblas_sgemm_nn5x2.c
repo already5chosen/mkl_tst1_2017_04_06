@@ -1563,6 +1563,307 @@ static void noncblas_sgemm_narrow_n(
   // TODO
 }
 
+static void noncblas_sgemm_k1(noncblas_sgemm_prm_t* pPrm)
+{
+  if (pPrm->beta == 0) {
+    if (pPrm->alpha == 1.0f) {
+      unsigned nDiv = pPrm->N / (SIMD_FACTOR*8);
+      while (nDiv != 0) {
+        const scalar_t *B = pPrm->B;
+        fp_vector_t b0 = MM_LOADU_Px(B); B += SIMD_FACTOR;
+        fp_vector_t b1 = MM_LOADU_Px(B); B += SIMD_FACTOR;
+        fp_vector_t b2 = MM_LOADU_Px(B); B += SIMD_FACTOR;
+        fp_vector_t b3 = MM_LOADU_Px(B); B += SIMD_FACTOR;
+        fp_vector_t b4 = MM_LOADU_Px(B); B += SIMD_FACTOR;
+        fp_vector_t b5 = MM_LOADU_Px(B); B += SIMD_FACTOR;
+        fp_vector_t b6 = MM_LOADU_Px(B); B += SIMD_FACTOR;
+        fp_vector_t b7 = MM_LOADU_Px(B); B += SIMD_FACTOR;
+
+        const scalar_t *A = pPrm->A;
+        int lda = pPrm->lda;
+        scalar_t *C = pPrm->C;
+        int ldc = pPrm->ldc;
+        unsigned M = pPrm->M;
+        do {
+          fp_vector_t a = MM_BROADCAST_Sx(A); A += lda;
+          MM_STOREU_Px(C+SIMD_FACTOR*0, MM_MUL_Px(b0, a));
+          MM_STOREU_Px(C+SIMD_FACTOR*1, MM_MUL_Px(b1, a));
+          MM_STOREU_Px(C+SIMD_FACTOR*2, MM_MUL_Px(b2, a));
+          MM_STOREU_Px(C+SIMD_FACTOR*3, MM_MUL_Px(b3, a));
+          MM_STOREU_Px(C+SIMD_FACTOR*4, MM_MUL_Px(b4, a));
+          MM_STOREU_Px(C+SIMD_FACTOR*5, MM_MUL_Px(b5, a));
+          MM_STOREU_Px(C+SIMD_FACTOR*6, MM_MUL_Px(b6, a));
+          MM_STOREU_Px(C+SIMD_FACTOR*7, MM_MUL_Px(b7, a));
+          C += ldc;
+        } while (--M);
+
+        pPrm->B += SIMD_FACTOR*8;
+        pPrm->C += SIMD_FACTOR*8;
+        --nDiv;
+      }
+
+      unsigned nRem = pPrm->N % (SIMD_FACTOR*8);
+      nDiv = nRem / SIMD_FACTOR;
+      const scalar_t *B = pPrm->B;
+      while (nDiv != 0) {
+        fp_vector_t b = MM_LOADU_Px(B); B += SIMD_FACTOR;
+
+        const scalar_t *A = pPrm->A;
+        int lda = pPrm->lda;
+        scalar_t *C = pPrm->C;
+        int ldc = pPrm->ldc;
+        unsigned M = pPrm->M;
+        do {
+          fp_vector_t a = MM_BROADCAST_Sx(A); A += lda;
+          MM_STOREU_Px(C, MM_MUL_Px(b, a));   C += ldc;
+        } while (--M);
+
+        pPrm->C += SIMD_FACTOR;
+        --nDiv;
+      }
+
+      if (pPrm->N % SIMD_FACTOR) {
+        int_vector_t mask_n = pPrm->mask_n;
+        fp_vector_t b = MM_MASKLOADU_Px(B, mask_n);
+
+        const scalar_t *A = pPrm->A;
+        int lda = pPrm->lda;
+        scalar_t *C = pPrm->C;
+        int ldc = pPrm->ldc;
+        unsigned M = pPrm->M;
+        do {
+          fp_vector_t a = MM_BROADCAST_Sx(A); A += lda;
+          MM_MASKSTOREU_Px(C, mask_n, MM_MUL_Px(b, a)); C += ldc;
+        } while (--M);
+      }
+    } else {
+      fp_vector_t alpha = MM_BROADCAST_Sx(&pPrm->alpha);
+      unsigned nDiv = pPrm->N / (SIMD_FACTOR*8);
+      while (nDiv != 0) {
+        const scalar_t *B = pPrm->B;
+        fp_vector_t b0 = MM_LOADU_Px(B); B += SIMD_FACTOR;
+        fp_vector_t b1 = MM_LOADU_Px(B); B += SIMD_FACTOR;
+        fp_vector_t b2 = MM_LOADU_Px(B); B += SIMD_FACTOR;
+        fp_vector_t b3 = MM_LOADU_Px(B); B += SIMD_FACTOR;
+        fp_vector_t b4 = MM_LOADU_Px(B); B += SIMD_FACTOR;
+        fp_vector_t b5 = MM_LOADU_Px(B); B += SIMD_FACTOR;
+        fp_vector_t b6 = MM_LOADU_Px(B); B += SIMD_FACTOR;
+        fp_vector_t b7 = MM_LOADU_Px(B); B += SIMD_FACTOR;
+
+        const scalar_t *A = pPrm->A;
+        int lda = pPrm->lda;
+        scalar_t *C = pPrm->C;
+        int ldc = pPrm->ldc;
+        unsigned M = pPrm->M;
+        do {
+          fp_vector_t a = MM_BROADCAST_Sx(A); A += lda;
+          a = MM_MUL_Px(a, alpha);
+          MM_STOREU_Px(C+SIMD_FACTOR*0, MM_MUL_Px(b0, a));
+          MM_STOREU_Px(C+SIMD_FACTOR*1, MM_MUL_Px(b1, a));
+          MM_STOREU_Px(C+SIMD_FACTOR*2, MM_MUL_Px(b2, a));
+          MM_STOREU_Px(C+SIMD_FACTOR*3, MM_MUL_Px(b3, a));
+          MM_STOREU_Px(C+SIMD_FACTOR*4, MM_MUL_Px(b4, a));
+          MM_STOREU_Px(C+SIMD_FACTOR*5, MM_MUL_Px(b5, a));
+          MM_STOREU_Px(C+SIMD_FACTOR*6, MM_MUL_Px(b6, a));
+          MM_STOREU_Px(C+SIMD_FACTOR*7, MM_MUL_Px(b7, a));
+          C += ldc;
+        } while (--M);
+
+        pPrm->B += SIMD_FACTOR*8;
+        pPrm->C += SIMD_FACTOR*8;
+        --nDiv;
+      }
+
+      unsigned nRem = pPrm->N % (SIMD_FACTOR*8);
+      nDiv = nRem / SIMD_FACTOR;
+      const scalar_t *B = pPrm->B;
+      while (nDiv != 0) {
+        fp_vector_t b = MM_LOADU_Px(B); B += SIMD_FACTOR;
+
+        const scalar_t *A = pPrm->A;
+        int lda = pPrm->lda;
+        scalar_t *C = pPrm->C;
+        int ldc = pPrm->ldc;
+        unsigned M = pPrm->M;
+        do {
+          fp_vector_t a = MM_BROADCAST_Sx(A); A += lda;
+          a = MM_MUL_Px(a, alpha);
+          MM_STOREU_Px(C, MM_MUL_Px(b, a));   C += ldc;
+        } while (--M);
+
+        pPrm->C += SIMD_FACTOR;
+        --nDiv;
+      }
+
+      if (pPrm->N % SIMD_FACTOR) {
+        int_vector_t mask_n = pPrm->mask_n;
+        fp_vector_t b = MM_MASKLOADU_Px(B, mask_n);
+
+        const scalar_t *A = pPrm->A;
+        int lda = pPrm->lda;
+        scalar_t *C = pPrm->C;
+        int ldc = pPrm->ldc;
+        unsigned M = pPrm->M;
+        do {
+          fp_vector_t a = MM_BROADCAST_Sx(A); A += lda;
+          a = MM_MUL_Px(a, alpha);
+          MM_MASKSTOREU_Px(C, mask_n, MM_MUL_Px(b, a)); C += ldc;
+        } while (--M);
+      }
+    }
+  } else {
+    fp_vector_t beta = MM_BROADCAST_Sx(&pPrm->beta);
+    if (pPrm->alpha == 1.0f) {
+      unsigned nDiv = pPrm->N / (SIMD_FACTOR*8);
+      while (nDiv != 0) {
+        const scalar_t *B = pPrm->B;
+        fp_vector_t b0 = MM_LOADU_Px(B); B += SIMD_FACTOR;
+        fp_vector_t b1 = MM_LOADU_Px(B); B += SIMD_FACTOR;
+        fp_vector_t b2 = MM_LOADU_Px(B); B += SIMD_FACTOR;
+        fp_vector_t b3 = MM_LOADU_Px(B); B += SIMD_FACTOR;
+        fp_vector_t b4 = MM_LOADU_Px(B); B += SIMD_FACTOR;
+        fp_vector_t b5 = MM_LOADU_Px(B); B += SIMD_FACTOR;
+        fp_vector_t b6 = MM_LOADU_Px(B); B += SIMD_FACTOR;
+        fp_vector_t b7 = MM_LOADU_Px(B); B += SIMD_FACTOR;
+
+        const scalar_t *A = pPrm->A;
+        int lda = pPrm->lda;
+        scalar_t *C = pPrm->C;
+        int ldc = pPrm->ldc;
+        unsigned M = pPrm->M;
+        do {
+          fp_vector_t a = MM_BROADCAST_Sx(A); A += lda;
+          MM_STOREU_Px(C+SIMD_FACTOR*0, MM_FMADD(b0, a, MM_MUL_Px(beta, MM_LOADU_Px(C+SIMD_FACTOR*0))));
+          MM_STOREU_Px(C+SIMD_FACTOR*1, MM_FMADD(b1, a, MM_MUL_Px(beta, MM_LOADU_Px(C+SIMD_FACTOR*1))));
+          MM_STOREU_Px(C+SIMD_FACTOR*2, MM_FMADD(b2, a, MM_MUL_Px(beta, MM_LOADU_Px(C+SIMD_FACTOR*2))));
+          MM_STOREU_Px(C+SIMD_FACTOR*3, MM_FMADD(b3, a, MM_MUL_Px(beta, MM_LOADU_Px(C+SIMD_FACTOR*3))));
+          MM_STOREU_Px(C+SIMD_FACTOR*4, MM_FMADD(b4, a, MM_MUL_Px(beta, MM_LOADU_Px(C+SIMD_FACTOR*4))));
+          MM_STOREU_Px(C+SIMD_FACTOR*5, MM_FMADD(b5, a, MM_MUL_Px(beta, MM_LOADU_Px(C+SIMD_FACTOR*5))));
+          MM_STOREU_Px(C+SIMD_FACTOR*6, MM_FMADD(b6, a, MM_MUL_Px(beta, MM_LOADU_Px(C+SIMD_FACTOR*6))));
+          MM_STOREU_Px(C+SIMD_FACTOR*7, MM_FMADD(b7, a, MM_MUL_Px(beta, MM_LOADU_Px(C+SIMD_FACTOR*7))));
+          C += ldc;
+        } while (--M);
+
+        pPrm->B += SIMD_FACTOR*8;
+        pPrm->C += SIMD_FACTOR*8;
+        --nDiv;
+      }
+
+      unsigned nRem = pPrm->N % (SIMD_FACTOR*8);
+      nDiv = nRem / SIMD_FACTOR;
+      const scalar_t *B = pPrm->B;
+      while (nDiv != 0) {
+        fp_vector_t b = MM_LOADU_Px(B); B += SIMD_FACTOR;
+
+        const scalar_t *A = pPrm->A;
+        int lda = pPrm->lda;
+        scalar_t *C = pPrm->C;
+        int ldc = pPrm->ldc;
+        unsigned M = pPrm->M;
+        do {
+          fp_vector_t a = MM_BROADCAST_Sx(A); A += lda;
+          fp_vector_t c = MM_LOADU_Px(C);
+          MM_STOREU_Px(C, MM_FMADD(b, a, MM_MUL_Px(beta, c))); C += ldc;
+        } while (--M);
+
+        pPrm->C += SIMD_FACTOR;
+        --nDiv;
+      }
+
+      if (pPrm->N % SIMD_FACTOR) {
+        int_vector_t mask_n = pPrm->mask_n;
+        fp_vector_t b = MM_MASKLOADU_Px(B, mask_n);
+
+        const scalar_t *A = pPrm->A;
+        int lda = pPrm->lda;
+        scalar_t *C = pPrm->C;
+        int ldc = pPrm->ldc;
+        unsigned M = pPrm->M;
+        do {
+          fp_vector_t a = MM_BROADCAST_Sx(A); A += lda;
+          fp_vector_t c = MM_MASKLOADU_Px(C, mask_n);
+          MM_MASKSTOREU_Px(C, mask_n, MM_FMADD(b, a, MM_MUL_Px(beta, c))); C += ldc;
+        } while (--M);
+      }
+    } else {
+      fp_vector_t alpha = MM_BROADCAST_Sx(&pPrm->alpha);
+      unsigned nDiv = pPrm->N / (SIMD_FACTOR*8);
+      while (nDiv != 0) {
+        const scalar_t *B = pPrm->B;
+        fp_vector_t b0 = MM_LOADU_Px(B); B += SIMD_FACTOR;
+        fp_vector_t b1 = MM_LOADU_Px(B); B += SIMD_FACTOR;
+        fp_vector_t b2 = MM_LOADU_Px(B); B += SIMD_FACTOR;
+        fp_vector_t b3 = MM_LOADU_Px(B); B += SIMD_FACTOR;
+        fp_vector_t b4 = MM_LOADU_Px(B); B += SIMD_FACTOR;
+        fp_vector_t b5 = MM_LOADU_Px(B); B += SIMD_FACTOR;
+        fp_vector_t b6 = MM_LOADU_Px(B); B += SIMD_FACTOR;
+        fp_vector_t b7 = MM_LOADU_Px(B); B += SIMD_FACTOR;
+
+        const scalar_t *A = pPrm->A;
+        int lda = pPrm->lda;
+        scalar_t *C = pPrm->C;
+        int ldc = pPrm->ldc;
+        unsigned M = pPrm->M;
+        do {
+          fp_vector_t a = MM_BROADCAST_Sx(A); A += lda;
+          a = MM_MUL_Px(a, alpha);
+          MM_STOREU_Px(C+SIMD_FACTOR*0, MM_FMADD(b0, a, MM_MUL_Px(beta, MM_LOADU_Px(C+SIMD_FACTOR*0))));
+          MM_STOREU_Px(C+SIMD_FACTOR*1, MM_FMADD(b1, a, MM_MUL_Px(beta, MM_LOADU_Px(C+SIMD_FACTOR*1))));
+          MM_STOREU_Px(C+SIMD_FACTOR*2, MM_FMADD(b2, a, MM_MUL_Px(beta, MM_LOADU_Px(C+SIMD_FACTOR*2))));
+          MM_STOREU_Px(C+SIMD_FACTOR*3, MM_FMADD(b3, a, MM_MUL_Px(beta, MM_LOADU_Px(C+SIMD_FACTOR*3))));
+          MM_STOREU_Px(C+SIMD_FACTOR*4, MM_FMADD(b4, a, MM_MUL_Px(beta, MM_LOADU_Px(C+SIMD_FACTOR*4))));
+          MM_STOREU_Px(C+SIMD_FACTOR*5, MM_FMADD(b5, a, MM_MUL_Px(beta, MM_LOADU_Px(C+SIMD_FACTOR*5))));
+          MM_STOREU_Px(C+SIMD_FACTOR*6, MM_FMADD(b6, a, MM_MUL_Px(beta, MM_LOADU_Px(C+SIMD_FACTOR*6))));
+          MM_STOREU_Px(C+SIMD_FACTOR*7, MM_FMADD(b7, a, MM_MUL_Px(beta, MM_LOADU_Px(C+SIMD_FACTOR*7))));
+          C += ldc;
+        } while (--M);
+
+        pPrm->B += SIMD_FACTOR*8;
+        pPrm->C += SIMD_FACTOR*8;
+        --nDiv;
+      }
+
+      unsigned nRem = pPrm->N % (SIMD_FACTOR*8);
+      nDiv = nRem / SIMD_FACTOR;
+      const scalar_t *B = pPrm->B;
+      while (nDiv != 0) {
+        fp_vector_t b = MM_LOADU_Px(B); B += SIMD_FACTOR;
+
+        const scalar_t *A = pPrm->A;
+        int lda = pPrm->lda;
+        scalar_t *C = pPrm->C;
+        int ldc = pPrm->ldc;
+        unsigned M = pPrm->M;
+        do {
+          fp_vector_t a = MM_BROADCAST_Sx(A); A += lda;
+          a = MM_MUL_Px(a, alpha);
+          fp_vector_t c = MM_LOADU_Px(C);
+          MM_STOREU_Px(C, MM_FMADD(b, a, MM_MUL_Px(beta, c))); C += ldc;
+        } while (--M);
+
+        pPrm->C += SIMD_FACTOR;
+        --nDiv;
+      }
+
+      if (pPrm->N % SIMD_FACTOR) {
+        int_vector_t mask_n = pPrm->mask_n;
+        fp_vector_t b = MM_MASKLOADU_Px(B, mask_n);
+
+        const scalar_t *A = pPrm->A;
+        int lda = pPrm->lda;
+        scalar_t *C = pPrm->C;
+        int ldc = pPrm->ldc;
+        unsigned M = pPrm->M;
+        do {
+          fp_vector_t a = MM_BROADCAST_Sx(A); A += lda;
+          a = MM_MUL_Px(a, alpha);
+          fp_vector_t c = MM_MASKLOADU_Px(C, mask_n);
+          MM_MASKSTOREU_Px(C, mask_n, MM_FMADD(b, a, MM_MUL_Px(beta, c))); C += ldc;
+        } while (--M);
+      }
+    }
+  }
+}
 
 void func_name(
   int M, int N, int K,
@@ -1593,7 +1894,14 @@ void func_name(
   prm.alpha = alpha;
   prm.beta  = beta;
 
-  if (N > SIMD_FACTOR) {
+  if (K < 7) {
+    switch (K) {
+      case 1:  noncblas_sgemm_k1(&prm); break;
+
+      default:
+        break;
+    }
+  } else if (N > SIMD_FACTOR) {
     noncblas_sgemm_wide_n(&prm);
   } else if (N >= 1) {
     noncblas_sgemm_narrow_n(M, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
