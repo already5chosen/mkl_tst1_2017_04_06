@@ -2603,7 +2603,7 @@ static void noncblas_sgemm_k4(noncblas_sgemm_prm_t* pPrm)
         fp_vector_t a0 = MM_BROADCAST_Sx(A+0);
         fp_vector_t a1 = MM_BROADCAST_Sx(A+1);
         fp_vector_t a2 = MM_BROADCAST_Sx(A+2);
-        fp_vector_t a3 = MM_BROADCAST_Sx(A+2);
+        fp_vector_t a3 = MM_BROADCAST_Sx(A+3);
         A += lda;
 
         fp_vector_t acc0 = MM_MUL_Px(b00, a0);
